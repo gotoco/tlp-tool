@@ -77,17 +77,17 @@ impl TlpTool {
 
             table.set_titles(row!["TLP: ", tlp.get_tlp_format()]);
             table.set_format(*format::consts::FORMAT_NO_LINESEP_WITH_TITLE);
-            table.add_row(row!["Req ID", format!("{reqid:#X}")]);
-            table.add_row(row!["Tag", format!("{tag:#X}")]);
-            table.add_row(row!["Last DW BE", format!("{ldwbe:#X}")]);
-            table.add_row(row!["First DW BE", format!("{fdwbe:#X}")]);
+            table.add_row(row!["Req ID", format!("{reqid:#X}", reqid=reqid)]);
+            table.add_row(row!["Tag", format!("{tag:#X}", tag=tag)]);
+            table.add_row(row!["Last DW BE", format!("{ldwbe:#X}", ldwbe=ldwbe)]);
+            table.add_row(row!["First DW BE", format!("{fdwbe:#X}", fdwbe=fdwbe)]);
             
             match tlpf1 {
             	TlpFmt::NoDataHeader3DW | TlpFmt::WithDataHeader3DW => addr_desc = "Address (32b)",
             	TlpFmt::NoDataHeader4DW | TlpFmt::WithDataHeader4DW => addr_desc = "Address (64b)",
             	TlpFmt::TlpPrefix => addr_desc = "Unknown",
             }
-            table.add_row(row![addr_desc, format!("{addr:#X}")]);
+            table.add_row(row![addr_desc, format!("{addr:#X}", addr=addr)]);
             
             table.printstd();
         } else {
@@ -122,13 +122,13 @@ impl TlpTool {
 
             table.set_titles(row!["TLP: ", tlp.get_tlp_format()]);
             table.set_format(*format::consts::FORMAT_NO_LINESEP_WITH_TITLE);
-            table.add_row(row!["Req ID", format!("{req_id:#X}")]);
-            table.add_row(row!["Tag", format!("{tag:#X}")]);
-            table.add_row(row!["Bus", format!("{bus:#X}")]);
-            table.add_row(row!["Device", format!("{dev:#X}")]);
-            table.add_row(row!["Function", format!("{fun:#X}")]);
-            table.add_row(row!["Ext Reg Nr", format!("{ern:#X}")]);
-            table.add_row(row!["Reg Nr", format!("{rn:#X}")]);
+            table.add_row(row!["Req ID", format!("{req_id:#X}", req_id=req_id)]);
+            table.add_row(row!["Tag", format!("{tag:#X}", tag=tag)]);
+            table.add_row(row!["Bus", format!("{bus:#X}", bus=bus)]);
+            table.add_row(row!["Device", format!("{dev:#X}", dev=dev)]);
+            table.add_row(row!["Function", format!("{fun:#X}", fun=fun)]);
+            table.add_row(row!["Ext Reg Nr", format!("{ern:#X}", ern=ern)]);
+            table.add_row(row!["Reg Nr", format!("{rn:#X}", rn=rn)]);
             
             table.printstd();
         } else {
@@ -163,13 +163,13 @@ impl TlpTool {
 
             table.set_titles(row!["TLP: ", tlp.get_tlp_format()]);
             table.set_format(*format::consts::FORMAT_NO_LINESEP_WITH_TITLE);
-            table.add_row(row!["Compl ID", format!("{cmp_id:#X}")]);
-            table.add_row(row!["Compl Status", format!("{cmp_st:#X}")]);
-            table.add_row(row!["Byte Count Modified (PCI-X)", format!("{bcm:#X}")]);
-            table.add_row(row!["Byte Count", format!("{bcnt:#X}")]);
-            table.add_row(row!["Req ID", format!("{req_id:#X}")]);
-            table.add_row(row!["Tag", format!("{tag:#X}")]);
-            table.add_row(row!["Lower Address", format!("{laddr:#X}")]);
+            table.add_row(row!["Compl ID", format!("{cmp_id:#X}", cmp_id=cmp_id)]);
+            table.add_row(row!["Compl Status", format!("{cmp_st:#X}", cmp_st=cmp_st)]);
+            table.add_row(row!["Byte Count Modified (PCI-X)", format!("{bcm:#X}", bcm=bcm)]);
+            table.add_row(row!["Byte Count", format!("{bcnt:#X}", bcnt=bcnt)]);
+            table.add_row(row!["Req ID", format!("{req_id:#X}", req_id=req_id)]);
+            table.add_row(row!["Tag", format!("{tag:#X}", tag=tag)]);
+            table.add_row(row!["Lower Address", format!("{laddr:#X}", laddr=laddr)]);
             
             table.printstd();
         } else {
@@ -195,11 +195,11 @@ impl TlpTool {
             
             table.set_titles(row!["TLP: ", tlp.get_tlp_format()]);
             table.set_format(*format::consts::FORMAT_NO_LINESEP_WITH_TITLE);
-            table.add_row(row!["Req ID", format!("{req_id:#X}")]);
-            table.add_row(row!["Tag", format!("{tag:#X}")]);
-            table.add_row(row!["Message Code", format!("{msg_code:#X}")]);
-            table.add_row(row!["Message DW3", format!("{msg_dw3:#X}")]);
-            table.add_row(row!["Message DW4", format!("{msg_dw4:#X}")]);
+            table.add_row(row!["Req ID", format!("{req_id:#X}", req_id=req_id)]);
+            table.add_row(row!["Tag", format!("{tag:#X}", tag=tag)]);
+            table.add_row(row!["Message Code", format!("{msg_code:#X}", msg_code=msg_code)]);
+            table.add_row(row!["Message DW3", format!("{msg_dw3:#X}", msg_dw3=msg_dw3)]);
+            table.add_row(row!["Message DW4", format!("{msg_dw4:#X}", msg_dw4=msg_dw4)]);
 
             table.printstd();
         }
