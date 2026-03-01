@@ -284,6 +284,40 @@ fn valid_tlp_exits_zero() {
         .success();
 }
 
+// ── 4DW address display ───────────────────────────────────────────────────────
+
+// 4DW MemReadReq: Fmt=001 (4DW no data), Type=00000, Length=1
+// Req ID=0x0100, Tag=0x0A, upper addr=0xDEADBEEF, lower addr=0x12345670
+const MEM_READ_4DW: &str = "20000001 01000AFF DEADBEEF 12345670";
+
+#[test]
+fn mem_read_4dw_shows_split_address() {
+    cmd()
+        .args(["-i", MEM_READ_4DW])
+        .assert()
+        .success()
+        .stdout(pred::contains("MemReadReq"))
+        .stdout(pred::contains("4DW no Data Header"))
+        .stdout(pred::contains("Addr High (DW2)"))
+        .stdout(pred::contains("Addr Low  (DW3)"))
+        .stdout(pred::contains("0xDEADBEEF"))
+        .stdout(pred::contains("0x12345670"));
+}
+
+#[test]
+fn mem_read_3dw_shows_single_address() {
+    // 3DW MemReadReq: Fmt=000 (3DW no data), Type=00000, Length=1
+    // Req ID=0x0100, Tag=0x0A, addr=0xABCD1234
+    cmd()
+        .args(["-i", "00000001 01000AFF ABCD1234"])
+        .assert()
+        .success()
+        .stdout(pred::contains("MemReadReq"))
+        .stdout(pred::contains("Address (32b)"))
+        .stdout(pred::contains("0xABCD1234"))
+        .stdout(pred::contains("Addr High (DW2)").not());
+}
+
 // ── 0x-prefixed hex input ────────────────────────────────────────────────────
 
 #[test]
@@ -302,6 +336,19 @@ fn hex_mixed_prefix_and_bare_is_accepted() {
         .assert()
         .success()
         .stdout(pred::contains("ConfType0ReadReq"));
+}
+
+// ── Man page ──────────────────────────────────────────────────────────────────
+
+#[test]
+fn man_page_prints_and_exits_zero() {
+    cmd()
+        .args(["--man"])
+        .assert()
+        .success()
+        .stdout(pred::contains(".TH rtlp_tool"))
+        .stdout(pred::contains(".SH OPTIONS"))
+        .stdout(pred::contains("TLP"));
 }
 
 // ── Shell completions ─────────────────────────────────────────────────────────

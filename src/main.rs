@@ -1,6 +1,8 @@
 use std::fs::File;
 use std::io::BufRead;
 use std::io::BufReader;
+use std::io::IsTerminal;
+use std::io::Write;
 use std::result::Result;
 
 use rtlp_lib::{TlpPacket, TlpPacketHeader, TlpType, TlpFmt};
@@ -10,7 +12,7 @@ use clap::{ArgEnum, CommandFactory, Parser};
 use clap_complete::Shell;
 
 #[macro_use] extern crate prettytable;
-use prettytable::Table;
+use prettytable::{Table, Row, Cell};
 use prettytable::format;
 
 // ── Output format ─────────────────────────────────────────────────────────────
@@ -56,6 +58,10 @@ struct Args {
     /// Print shell completion script and exit
     #[clap(long, value_name = "SHELL")]
     completions: Option<Shell>,
+
+    /// Print man page in troff format and exit
+    #[clap(long)]
+    man: bool,
 }
 
 // ── Collected TLP data (for all rendering modes) ──────────────────────────────
@@ -170,6 +176,46 @@ fn read_lines_from<R: BufRead>(reader: R) -> Vec<String> {
         .collect()
 }
 
+// ── Color helpers ─────────────────────────────────────────────────────────────
+
+/// Returns true when color should be applied: stdout is a tty and NO_COLOR is unset.
+fn use_color() -> bool {
+    std::io::stdout().is_terminal() && std::env::var("NO_COLOR").is_err()
+}
+
+/// prettytable style_spec string for the TLP type cell.
+fn tlp_type_style(tlp_type: &str) -> &'static str {
+    if tlp_type.starts_with("Mem") || tlp_type.starts_with("IO") || tlp_type.contains("Atomic") {
+        "Fb" // blue — memory / IO / atomic
+    } else if tlp_type.starts_with("Conf") {
+        "Fc" // cyan — configuration
+    } else if tlp_type.starts_with("Msg") {
+        "Fm" // magenta — message
+    } else if tlp_type.starts_with("Cpl") {
+        "Fg" // green — completion
+    } else if tlp_type.starts_with("Error") {
+        "Fr" // red — parse error
+    } else {
+        ""
+    }
+}
+
+/// prettytable style_spec for common-header field values.
+fn header_val_style(name: &str, value: &str) -> &'static str {
+    match name {
+        "Ep" if value != "0" => "Fr", // Error Poison bit set
+        _ => "",
+    }
+}
+
+/// prettytable style_spec for body field values.
+fn body_val_style(key: &str, value: &str) -> &'static str {
+    match key {
+        "Compl Status" if value != "0x0" => "Fr", // non-zero completion status
+        _ => "",
+    }
+}
+
 // ── Config parsing ────────────────────────────────────────────────────────────
 
 enum ParseConfigError {
@@ -254,17 +300,21 @@ impl TlpTool {
     fn collect_mem_req(tlp: &TlpPacket) -> Vec<(String, String)> {
         let tlpf = tlp.get_tlp_format();
         let mr = new_mem_req(tlp.get_data(), &tlpf);
-        let addr_label = match tlpf {
-            TlpFmt::NoDataHeader3DW | TlpFmt::WithDataHeader3DW => "Address (32b)",
-            _ => "Address (64b)",
-        };
-        vec![
+        let is_4dw = matches!(tlpf, TlpFmt::NoDataHeader4DW | TlpFmt::WithDataHeader4DW);
+        let addr = mr.address();
+        let mut fields = vec![
             ("Req ID".into(),      format!("{:#X}", mr.req_id())),
             ("Tag".into(),         format!("{:#X}", mr.tag())),
             ("Last DW BE".into(),  format!("{:#X}", mr.ldwbe())),
             ("First DW BE".into(), format!("{:#X}", mr.fdwbe())),
-            (addr_label.into(),    format!("{:#X}", mr.address())),
-        ]
+        ];
+        if is_4dw {
+            fields.push(("Addr High (DW2)".into(), format!("{:#010X}", (addr >> 32) as u32)));
+            fields.push(("Addr Low  (DW3)".into(), format!("{:#010X}", (addr & 0xFFFF_FFFF) as u32)));
+        } else {
+            fields.push(("Address (32b)".into(), format!("{:#010X}", addr as u32)));
+        }
+        fields
     }
 
     fn collect_cfg_req(tlp: &TlpPacket) -> Vec<(String, String)> {
@@ -363,9 +413,16 @@ impl TlpTool {
     // ── render methods ─────────────────────────────────────────────────────────
 
     fn render_table(data: &TlpData) {
+        let color = use_color();
+
         // Type / source banner
         let mut t = Table::new();
-        t.add_row(row!["TLP Type", data.tlp_type, data.tlp_format]);
+        let type_style = if color { tlp_type_style(&data.tlp_type) } else { "" };
+        t.add_row(Row::new(vec![
+            Cell::new("TLP Type"),
+            Cell::new(&data.tlp_type).style_spec(type_style),
+            Cell::new(&data.tlp_format),
+        ]));
         if let Some(src) = &data.source {
             t.add_row(row!["Source", src, ""]);
         }
@@ -376,16 +433,26 @@ impl TlpTool {
         t.set_format(*format::consts::FORMAT_NO_LINESEP_WITH_TITLE);
         t.set_titles(row!["Field Name", "Offset\n(bits)", "Length\n(bits)", "Value"]);
         for (name, offset, length, value) in &data.header_fields {
-            t.add_row(row![name, offset, length, value]);
+            let val_style = if color { header_val_style(name, value) } else { "" };
+            t.add_row(Row::new(vec![
+                Cell::new(name),
+                Cell::new(offset),
+                Cell::new(length),
+                Cell::new(value).style_spec(val_style),
+            ]));
         }
         t.printstd();
 
         // Body fields
         let mut t = Table::new();
         t.set_format(*format::consts::FORMAT_NO_LINESEP_WITH_TITLE);
-        t.set_titles(row!["TLP:", data.tlp_format]);
+        t.set_titles(row!["TLP:", &data.tlp_format]);
         for (k, v) in &data.body_fields {
-            t.add_row(row![k, v]);
+            let val_style = if color { body_val_style(k, v) } else { "" };
+            t.add_row(Row::new(vec![
+                Cell::new(k),
+                Cell::new(v).style_spec(val_style),
+            ]));
         }
         t.printstd();
     }
@@ -479,6 +546,19 @@ fn main() {
     if let Some(shell) = args.completions {
         let mut cmd = Args::command();
         clap_complete::generate(shell, &mut cmd, "rtlp-tool", &mut std::io::stdout());
+        return;
+    }
+
+    // Man page: render troff to stdout and exit
+    if args.man {
+        let cmd = Args::command();
+        let man = clap_mangen::Man::new(cmd);
+        let mut buf = Vec::new();
+        if let Err(e) = man.render(&mut buf) {
+            eprintln!("error: failed to generate man page: {}", e);
+            std::process::exit(1);
+        }
+        std::io::stdout().write_all(&buf).unwrap();
         return;
     }
 
