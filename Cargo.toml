@@ -17,13 +17,23 @@ analysing AER error reports, and inspecting Header Log registers."""
 section = "utils"
 priority = "optional"
 assets = [
-    ["target/release/rtlp_tool", "usr/bin/rtlp-tool", "755"],
+    ["target/release/rtlp-tool", "usr/bin/rtlp-tool", "755"],
     ["README.md", "usr/share/doc/rtlp-tool/README.md", "644"],
 ]
+
+[[bin]]
+name = "rtlp-tool"
+path = "src/main.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 rtlp-lib = "0.3.0"
 clap = { version = "3.1.18", features = ["derive"] }
+clap_complete = "3"
+clap_mangen = "0.1"
 prettytable-rs = "^0.10"
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
