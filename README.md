@@ -143,13 +143,19 @@ Requires Rust toolchain installed ([rustup.rs](https://rustup.rs)):
 cargo install rtlp_tool
 ```
 
+After install the binary is available as `rtlp-tool`:
+
+```bash
+rtlp-tool -i "04000001 0000220f 01070000 9eece789"
+```
+
 ### Build from source
 
 ```bash
 git clone https://github.com/gotoco/tlp-tool.git
 cd tlp-tool
 cargo build --release
-./target/release/rtlp_tool -i "04000001 0000220f 01070000 9eece789"
+./target/release/rtlp-tool -i "04000001 0000220f 01070000 9eece789"
 ```
 
 ## Dependencies
