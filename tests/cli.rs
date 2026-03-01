@@ -8,7 +8,7 @@ const CPL_DATA: &str  = "4a000001 2001FF00 C281FF10 00000000";
 
 #[allow(deprecated)]
 fn cmd() -> Command {
-    Command::cargo_bin("rtlp_tool").unwrap()
+    Command::cargo_bin("rtlp-tool").unwrap()
 }
 
 // ── Basic parsing ─────────────────────────────────────────────────────────────
