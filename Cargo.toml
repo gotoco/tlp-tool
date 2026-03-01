@@ -30,4 +30,5 @@ path = "src/main.rs"
 [dependencies]
 rtlp-lib = "0.3.0"
 clap = { version = "3.1.18", features = ["derive"] }
+clap_complete = "3"
 prettytable-rs = "^0.10"

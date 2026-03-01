@@ -119,13 +119,15 @@ rtlp_tool -i "04000001 00200a03 05010000 00050100"
 ## Usage
 
 ```
-rtlp-tool [OPTIONS] --input <INPUT>...
+rtlp-tool [OPTIONS]
 
 Options:
-  -i, --input <INPUT>    TLP hex string(s) to parse. May be specified multiple times.
-  -c, --count <COUNT>    Process only the first N inputs (default: all)
-  -h, --help             Print help
-  -V, --version          Print version
+  -i, --input <INPUT>      TLP hex string(s) to parse. May be specified multiple times.
+                           Reads one TLP per line from stdin when omitted.
+  -c, --count <COUNT>      Process only the first N inputs (default: all)
+      --completions <SHELL> Print shell completion script [bash, zsh, fish, powershell]
+  -h, --help               Print help
+  -V, --version            Print version
 ```
 
 ### Parse a single TLP
@@ -184,6 +186,53 @@ When you have many `-i` inputs but only want to inspect the first few:
 
 ```bash
 rtlp-tool -i "..." -i "..." -i "..." --count 2
+```
+
+### Pipe from stdin
+
+When `-i` is omitted the tool reads one TLP hex string per line from stdin,
+making it easy to feed AER dumps or scripted output directly:
+
+```bash
+# from dmesg
+dmesg | grep "TLP Header:" | awk '{print $NF}' | rtlp-tool
+
+# from a file
+cat aer_dump.txt | rtlp-tool
+
+# inline heredoc
+rtlp-tool <<EOF
+04000001 00200a03 05010000 00050100
+4a000001 2001FF00 C281FF10 00000000
+EOF
+```
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0`  | All TLPs parsed successfully |
+| `1`  | One or more TLPs contained an invalid type/format, or input was not valid hex |
+
+Useful for scripting:
+
+```bash
+rtlp-tool -i "$header" && echo "TLP is valid" || echo "TLP parse error"
+```
+
+### Shell completions
+
+Generate a completion script for your shell and source it:
+
+```bash
+# bash
+rtlp-tool --completions bash > /etc/bash_completion.d/rtlp-tool
+
+# zsh
+rtlp-tool --completions zsh > ~/.zsh/completions/_rtlp-tool
+
+# fish
+rtlp-tool --completions fish > ~/.config/fish/completions/rtlp-tool.fish
 ```
 
 ## Installation

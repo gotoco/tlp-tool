@@ -1,10 +1,12 @@
 use std::convert::TryFrom;
+use std::io::BufRead;
 use std::result::Result;
 
 use rtlp_lib::{TlpPacket, TlpPacketHeader, TlpType, TlpFmt};
 use rtlp_lib::{new_mem_req, new_conf_req, new_cmpl_req, new_msg_req};
 
-use clap::Parser;
+use clap::{CommandFactory, Parser};
+use clap_complete::Shell;
 
 #[macro_use] extern crate prettytable;
 use prettytable::{Table}; //, Row, Cell};
@@ -14,12 +16,17 @@ use prettytable::format;
 #[clap(author, version, about, long_about = None)]
 struct Args {
     /// TLP hex string(s) to parse. May be specified multiple times.
-    #[clap(short, long, required = true, multiple_occurrences = true)]
+    /// Reads one TLP per line from stdin when omitted.
+    #[clap(short, long, multiple_occurrences = true)]
     input: Vec<String>,
 
     /// Process only the first N inputs (default: all)
     #[clap(short, long)]
     count: Option<usize>,
+
+    /// Print shell completion script and exit
+    #[clap(long, value_name = "SHELL")]
+    completions: Option<Shell>,
 }
 
 struct Config {
@@ -248,17 +255,23 @@ impl TlpTool {
 		self.display_tlp_body(tlp);
     }
 
-    fn run(&self) {
+    fn run(&self) -> i32 {
         let limit = self.config.count.unwrap_or(self.config.inputs.len());
         let multiple = self.config.inputs.len() > 1;
+        let mut had_error = false;
 
         for (i, input) in self.config.inputs.iter().take(limit).enumerate() {
             if multiple {
                 println!("\n=== TLP #{} ===", i + 1);
             }
             let tlp = TlpPacket::new(input.clone());
+            if tlp.get_tlp_type().is_err() {
+                had_error = true;
+            }
             self.display_tlp_info(&tlp);
         }
+
+        if had_error { 1 } else { 0 }
     }
 }
 
@@ -293,10 +306,10 @@ impl Config {
         Result::Ok(result)
     }
 
-    fn new(args: &Args) -> Result<Config, ParseConfigError> {
+    fn new(raw_inputs: Vec<String>, count: Option<usize>) -> Result<Config, ParseConfigError> {
         let mut inputs = Vec::new();
 
-        for (i, raw) in args.input.iter().enumerate() {
+        for (i, raw) in raw_inputs.iter().enumerate() {
             let cleaned = Config::remove_whitespace(raw);
             match Config::convert_to_vec(&cleaned) {
                 Ok(vec) => inputs.push(vec),
@@ -304,16 +317,41 @@ impl Config {
             }
         }
 
-        Ok(Config { inputs, count: args.count })
+        Ok(Config { inputs, count })
     }
 }
 
 fn main() {
     let args = Args::parse();
 
-    match Config::new(&args) {
+    // 3 — shell completions: print and exit
+    if let Some(shell) = args.completions {
+        let mut cmd = Args::command();
+        clap_complete::generate(shell, &mut cmd, "rtlp-tool", &mut std::io::stdout());
+        return;
+    }
+
+    // 1 — stdin piping: fall back to stdin when no -i given
+    let raw_inputs: Vec<String> = if args.input.is_empty() {
+        std::io::stdin()
+            .lock()
+            .lines()
+            .filter_map(|l| l.ok())
+            .filter(|l| !l.trim().is_empty())
+            .collect()
+    } else {
+        args.input
+    };
+
+    if raw_inputs.is_empty() {
+        eprintln!("error: no input provided — use -i <HEX> or pipe hex strings via stdin");
+        std::process::exit(1);
+    }
+
+    match Config::new(raw_inputs, args.count) {
         Result::Ok(c) => {
-            TlpTool::new(c).run();
+            // 2 — exit code reflects whether any TLP failed to parse
+            std::process::exit(TlpTool::new(c).run());
         }
         Result::Err(e) => {
             match e {
