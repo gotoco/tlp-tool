@@ -57,7 +57,11 @@ impl TlpTool {
 
     fn display_tlp_type(&self, tlp: &TlpPacket) {
 		let mut table = Table::new();
-		table.add_row(row!["TLP Type", tlp.get_tlp_type(), tlp.get_tlp_format()]);
+		let tlp_type_str = match tlp.get_tlp_type() {
+			Ok(t)  => format!("{:?}", t),
+			Err(e) => format!("Error: {:?}", e),
+		};
+		table.add_row(row!["TLP Type", tlp_type_str, tlp.get_tlp_format()]);
 
 		table.printstd();
 	}
@@ -208,30 +212,31 @@ impl TlpTool {
 	fn display_uninplemented(&self, _tlp: &TlpPacket) { println!("Display not implemented yet"); }
 
 	fn display_tlp_body(&self, tlp: &TlpPacket) {
-		let tlpt = tlp.get_tlp_type();
-
-		match tlpt {
-			TlpType::MemReadReq				=> self.display_mem_req(tlp),
-			TlpType::MemReadLockReq			=> self.display_mem_req(tlp),
-			TlpType::MemWriteReq			=> self.display_mem_req(tlp),
-			TlpType::IOReadReq				=> self.display_mem_req(tlp),
-			TlpType::IOWriteReq				=> self.display_mem_req(tlp),
-			TlpType::ConfType0ReadReq		=> self.display_cfg_req(tlp),
-			TlpType::ConfType0WriteReq		=> self.display_cfg_req(tlp),
-			TlpType::ConfType1ReadReq		=> self.display_cfg_req(tlp),
-			TlpType::ConfType1WriteReq		=> self.display_cfg_req(tlp),
-			TlpType::MsgReq					=> self.display_message_req(tlp),
-			TlpType::MsgReqData				=> self.display_message_req(tlp),
-			TlpType::Cpl					=> self.display_cmpl(tlp),
-			TlpType::CplData				=> self.display_cmpl(tlp),
-			TlpType::CplLocked				=> self.display_cmpl(tlp),
-			TlpType::CplDataLocked			=> self.display_cmpl(tlp),
-			TlpType::FetchAddAtomicOpReq	=> self.display_mem_req(tlp),
-			TlpType::SwapAtomicOpReq		=> self.display_mem_req(tlp),
-			TlpType::CompareSwapAtomicOpReq	=> self.display_mem_req(tlp),
-			TlpType::LocalTlpPrefix			=> self.display_uninplemented(tlp),
-			TlpType::EndToEndTlpPrefix		=> self.display_uninplemented(tlp),
-		};
+		match tlp.get_tlp_type() {
+			Ok(tlpt) => match tlpt {
+				TlpType::MemReadReq				=> self.display_mem_req(tlp),
+				TlpType::MemReadLockReq			=> self.display_mem_req(tlp),
+				TlpType::MemWriteReq			=> self.display_mem_req(tlp),
+				TlpType::IOReadReq				=> self.display_mem_req(tlp),
+				TlpType::IOWriteReq				=> self.display_mem_req(tlp),
+				TlpType::ConfType0ReadReq		=> self.display_cfg_req(tlp),
+				TlpType::ConfType0WriteReq		=> self.display_cfg_req(tlp),
+				TlpType::ConfType1ReadReq		=> self.display_cfg_req(tlp),
+				TlpType::ConfType1WriteReq		=> self.display_cfg_req(tlp),
+				TlpType::MsgReq					=> self.display_message_req(tlp),
+				TlpType::MsgReqData				=> self.display_message_req(tlp),
+				TlpType::Cpl					=> self.display_cmpl(tlp),
+				TlpType::CplData				=> self.display_cmpl(tlp),
+				TlpType::CplLocked				=> self.display_cmpl(tlp),
+				TlpType::CplDataLocked			=> self.display_cmpl(tlp),
+				TlpType::FetchAddAtomicOpReq	=> self.display_mem_req(tlp),
+				TlpType::SwapAtomicOpReq		=> self.display_mem_req(tlp),
+				TlpType::CompareSwapAtomicOpReq	=> self.display_mem_req(tlp),
+				TlpType::LocalTlpPrefix			=> self.display_uninplemented(tlp),
+				TlpType::EndToEndTlpPrefix		=> self.display_uninplemented(tlp),
+			},
+			Err(e) => println!("Cannot parse TLP type: {:?}", e),
+		}
 	}
 
     fn display_tlp_info(&self, tlp: &TlpPacket) {
