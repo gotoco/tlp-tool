@@ -126,8 +126,10 @@ Options:
                              Reads one TLP per line from stdin when omitted.
   -f, --file <FILE>          Read TLP hex strings from a file (one per line)
       --aer                  Scan input for AER TLP headers
-                             (matches both 'TLP Header:' and 'HeaderLog:' patterns,
-                              tracks PCIe device context from lspci address lines)
+                             (matches both 'TLP Header:' and 'HeaderLog:' patterns;
+                              associates TLPs with device context only when preceded
+                              by lspci-style PCI address lines that start with a PCI
+                              address; typical dmesg-style AER lines will not set Source)
       --lspci                Parse lspci -vvv output: extract non-zero HeaderLog entries
                              and annotate each TLP with the device it belongs to
   -c, --count <COUNT>        Process only the first N inputs (default: all)
