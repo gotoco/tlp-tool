@@ -284,6 +284,26 @@ fn valid_tlp_exits_zero() {
         .success();
 }
 
+// ── 0x-prefixed hex input ────────────────────────────────────────────────────
+
+#[test]
+fn hex_with_0x_prefix_is_accepted() {
+    cmd()
+        .args(["-i", "0x04000001 0x0000220f 0x01070000 0x9eece789"])
+        .assert()
+        .success()
+        .stdout(pred::contains("ConfType0ReadReq"));
+}
+
+#[test]
+fn hex_mixed_prefix_and_bare_is_accepted() {
+    cmd()
+        .args(["-i", "0x04000001 0000220f 0x01070000 9eece789"])
+        .assert()
+        .success()
+        .stdout(pred::contains("ConfType0ReadReq"));
+}
+
 // ── Shell completions ─────────────────────────────────────────────────────────
 
 #[test]

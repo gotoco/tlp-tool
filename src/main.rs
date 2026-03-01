@@ -178,7 +178,11 @@ enum ParseConfigError {
 
 impl Config {
     fn remove_whitespace(s: &str) -> String {
-        s.chars().filter(|c| !c.is_whitespace()).collect()
+        // Strip optional 0x/0X prefix from each whitespace-separated token,
+        // then concatenate — allows inputs like "0x04000001 0x0000220f ..."
+        s.split_whitespace()
+            .map(|tok| tok.strip_prefix("0x").or_else(|| tok.strip_prefix("0X")).unwrap_or(tok))
+            .collect()
     }
 
     fn convert_to_vec(s: &str) -> Result<Vec<u8>, ()> {
