@@ -122,12 +122,19 @@ rtlp_tool -i "04000001 00200a03 05010000 00050100"
 rtlp-tool [OPTIONS]
 
 Options:
-  -i, --input <INPUT>      TLP hex string(s) to parse. May be specified multiple times.
-                           Reads one TLP per line from stdin when omitted.
-  -c, --count <COUNT>      Process only the first N inputs (default: all)
-      --completions <SHELL> Print shell completion script [bash, zsh, fish, powershell]
-  -h, --help               Print help
-  -V, --version            Print version
+  -i, --input <INPUT>        TLP hex string(s) to parse. May be specified multiple times.
+                             Reads one TLP per line from stdin when omitted.
+  -f, --file <FILE>          Read TLP hex strings from a file (one per line)
+      --aer                  Scan input for AER TLP headers
+                             (matches both 'TLP Header:' and 'HeaderLog:' patterns,
+                              tracks PCIe device context from lspci address lines)
+      --lspci                Parse lspci -vvv output: extract non-zero HeaderLog entries
+                             and annotate each TLP with the device it belongs to
+  -c, --count <COUNT>        Process only the first N inputs (default: all)
+      --output <FORMAT>      Output format: table (default), json, csv
+      --completions <SHELL>  Print shell completion script [bash, zsh, fish, powershell]
+  -h, --help                 Print help
+  -V, --version              Print version
 ```
 
 ### Parse a single TLP
@@ -188,10 +195,80 @@ When you have many `-i` inputs but only want to inspect the first few:
 rtlp-tool -i "..." -i "..." -i "..." --count 2
 ```
 
+### Read TLPs from a file
+
+One hex string per line:
+
+```bash
+rtlp-tool -f tlps.txt
+rtlp-tool -f tlps.txt --output json
+```
+
+### AER log auto-parsing
+
+Pass raw AER kernel messages and let the tool extract every
+`TLP Header:` / `HeaderLog:` entry automatically.
+
+```bash
+# parse a saved AER dump
+rtlp-tool --aer -f aer_dump.txt
+
+# live: filter kernel ring buffer
+dmesg | rtlp-tool --aer
+
+# combine with output format
+dmesg | rtlp-tool --aer --output json
+```
+
+### lspci integration
+
+`--lspci` is purpose-built for `lspci -vvv` output. It scans for
+`HeaderLog:` entries, **silently skips all-zero headers** (devices with
+no error logged), and annotates every non-zero TLP with the PCIe device
+address and name it belongs to.
+
+```bash
+# live pipe
+lspci -vvv | rtlp-tool --lspci
+
+# from a saved file
+rtlp-tool --lspci -f lspci_output.txt
+
+# machine-readable
+lspci -vvv | rtlp-tool --lspci --output json
+```
+
+Example output:
+
+```
+=== TLP #1 ===
++----------+------------------------------------------------------------+--------------------+
+| TLP Type | ConfType0ReadReq                                           | 3DW no Data Header |
++----------+------------------------------------------------------------+--------------------+
+| Source   | 01:00.0 Non-Volatile memory controller: Phison Electronics |                    |
++----------+------------------------------------------------------------+--------------------+
+...
+```
+
+### Output format
+
+Three formats are supported via `--output`:
+
+| Format  | Description |
+|---------|-------------|
+| `table` | Human-readable ASCII tables (default) |
+| `json`  | One JSON object per TLP on stdout (ndjson) |
+| `csv`   | `index,source,tlp_type,tlp_format,section,key,value` rows |
+
+```bash
+rtlp-tool -i "04000001 00200a03 05010000 00050100" --output json
+rtlp-tool -f tlps.txt --output csv | column -t -s,
+```
+
 ### Pipe from stdin
 
-When `-i` is omitted the tool reads one TLP hex string per line from stdin,
-making it easy to feed AER dumps or scripted output directly:
+When `-i` and `-f` are omitted the tool reads one TLP hex string per line
+from stdin, making it easy to feed AER dumps or scripted output directly:
 
 ```bash
 # from dmesg
