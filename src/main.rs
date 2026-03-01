@@ -13,15 +13,18 @@ use prettytable::format;
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
-    #[clap(short, long)]
-    input: String,
+    /// TLP hex string(s) to parse. May be specified multiple times.
+    #[clap(short, long, required = true, multiple_occurrences = true)]
+    input: Vec<String>,
 
-    #[clap(short, long, default_value_t = 1)]
-    count: u8,
+    /// Process only the first N inputs (default: all)
+    #[clap(short, long)]
+    count: Option<usize>,
 }
 
 struct Config {
-    input: Vec<u8>,
+    inputs: Vec<Vec<u8>>,
+    count: Option<usize>,
 }
 
 struct TlpTool {
@@ -246,26 +249,33 @@ impl TlpTool {
     }
 
     fn run(&self) {
-        let tlp = TlpPacket::new(self.config.input.to_vec());
+        let limit = self.config.count.unwrap_or(self.config.inputs.len());
+        let multiple = self.config.inputs.len() > 1;
 
-        self.display_tlp_info(&tlp);
+        for (i, input) in self.config.inputs.iter().take(limit).enumerate() {
+            if multiple {
+                println!("\n=== TLP #{} ===", i + 1);
+            }
+            let tlp = TlpPacket::new(input.clone());
+            self.display_tlp_info(&tlp);
+        }
     }
 }
 
 enum ParseConfigError {
-    InvalidInput,
+    InvalidInput(usize),
 }
 
 impl Config {
     fn remove_whitespace(s: &str) -> String {
-            s.chars().filter(|c| !c.is_whitespace()).collect()
+        s.chars().filter(|c| !c.is_whitespace()).collect()
     }
 
     fn convert_to_vec(s: &str) -> Result<Vec<u8>, ()> {
         const RADIX: u32 = 16;
         let mut bytes: Vec<u8> = Vec::new();
 
-		// Filter string and report error on invalid character
+        // Filter string and report error on invalid character
         for c in s.chars() {
             match c.to_digit(RADIX) {
                 Some(d) => bytes.push(d as u8),
@@ -273,38 +283,44 @@ impl Config {
             }
         }
 
-		// We already have valid u4 array, now need to convert to u8
-		let mut result: Vec<u8> = Vec::new();
-		let hex_u8: Vec<&[u8]> = bytes.chunks(2).collect();
-		for h in hex_u8.iter() {
-			result.push((h[0] << 4) + h[1]);
-		}
+        // We already have valid u4 array, now need to convert to u8
+        let mut result: Vec<u8> = Vec::new();
+        let hex_u8: Vec<&[u8]> = bytes.chunks(2).collect();
+        for h in hex_u8.iter() {
+            result.push((h[0] << 4) + h[1]);
+        }
 
         Result::Ok(result)
     }
 
     fn new(args: &Args) -> Result<Config, ParseConfigError> {
+        let mut inputs = Vec::new();
 
-        let input = Config::remove_whitespace(&args.input);
-
-        match Config::convert_to_vec(&input) {
-            Ok(vec) => Result::Ok(Config {input: vec}),
-            Err(()) => Result::Err(ParseConfigError::InvalidInput),
+        for (i, raw) in args.input.iter().enumerate() {
+            let cleaned = Config::remove_whitespace(raw);
+            match Config::convert_to_vec(&cleaned) {
+                Ok(vec) => inputs.push(vec),
+                Err(()) => return Err(ParseConfigError::InvalidInput(i + 1)),
+            }
         }
+
+        Ok(Config { inputs, count: args.count })
     }
 }
 
 fn main() {
-    let config = Config::new(&Args::parse());
+    let args = Args::parse();
 
-    match config {
+    match Config::new(&args) {
         Result::Ok(c) => {
             TlpTool::new(c).run();
         }
         Result::Err(e) => {
             match e {
-                ParseConfigError::InvalidInput => println!("provided Input is invalid"),
+                ParseConfigError::InvalidInput(n) =>
+                    eprintln!("input #{n} is not valid hex"),
             }
+            std::process::exit(1);
         }
     }
 }
