@@ -116,14 +116,48 @@ rtlp_tool -i "04000001 00200a03 05010000 00050100"
 +------------+--------------------+
 ```
 
+## Installation
+
+### Debian / Ubuntu — pre-built package (recommended)
+
+Download the latest `.deb` from the [Releases page](https://github.com/gotoco/tlp-tool/releases) and install it:
+
+```bash
+wget https://github.com/gotoco/tlp-tool/releases/latest/download/rtlp-tool-<VERSION>-amd64.deb
+sudo apt install ./rtlp-tool-<VERSION>-amd64.deb
+```
+
+Replace `<VERSION>` with the release tag, e.g. `v0.2.0`.
+
+After install the binary is available as `rtlp-tool`:
+
+```bash
+rtlp-tool -i "04000001 0000220f 01070000 9eece789"
+```
+
+### From crates.io
+
+Requires Rust toolchain installed ([rustup.rs](https://rustup.rs)):
+
+```bash
+cargo install rtlp_tool
+```
+
+### Build from source
+
+```bash
+git clone https://github.com/gotoco/tlp-tool.git
+cd tlp-tool
+cargo build --release
+./target/release/rtlp_tool -i "04000001 0000220f 01070000 9eece789"
+```
+
 ## Dependencies
 
- * Rust TLP Lib: rust_tlplib
- * Command Line Argument Parser for Rust: clap
- * Rust Pretty Table: prettytable-rs
+ * [rtlp-lib](https://github.com/gotoco/rust_tlplib) — PCI TLP parsing library
+ * [clap](https://github.com/clap-rs/clap) — command line argument parser
+ * [prettytable-rs](https://github.com/phsym/prettytable-rs) — terminal table formatting
 
 ## License
 
-Licensed under:
-
- * The 3-Clause BSD License
+Licensed under the [3-Clause BSD License](LICENSE).
