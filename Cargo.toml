@@ -2,6 +2,24 @@
 name = "rtlp_tool"
 version = "0.2.0"
 edition = "2024"
+authors = ["Maciej Grochowski <maciej.grochowski@pm.me>"]
+description = "CLI tool for parsing and displaying PCI Express TLP packet headers"
+license = "BSD-3-Clause"
+repository = "https://github.com/gotoco/tlp-tool"
+
+[package.metadata.deb]
+maintainer = "Maciej Grochowski <maciej.grochowski@pm.me>"
+license-file = ["LICENSE", "4"]
+extended-description = """\
+rtlp-tool parses raw PCI Express Transaction Layer Packet (TLP) headers \
+into human-readable tables. Useful for debugging PCIe devices, \
+analysing AER error reports, and inspecting Header Log registers."""
+section = "utils"
+priority = "optional"
+assets = [
+    ["target/release/rtlp_tool", "usr/bin/rtlp-tool", "755"],
+    ["README.md", "usr/share/doc/rtlp-tool/README.md", "644"],
+]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
