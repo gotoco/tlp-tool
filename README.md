@@ -116,6 +116,76 @@ rtlp_tool -i "04000001 00200a03 05010000 00050100"
 +------------+--------------------+
 ```
 
+## Usage
+
+```
+rtlp-tool [OPTIONS] --input <INPUT>...
+
+Options:
+  -i, --input <INPUT>    TLP hex string(s) to parse. May be specified multiple times.
+  -c, --count <COUNT>    Process only the first N inputs (default: all)
+  -h, --help             Print help
+  -V, --version          Print version
+```
+
+### Parse a single TLP
+
+```bash
+rtlp-tool -i "04000001 00200a03 05010000 00050100"
+```
+
+### Parse multiple TLPs in one call
+
+Repeat `-i` for each TLP. The tool prints a numbered separator between them:
+
+```bash
+rtlp-tool \
+  -i "04000001 00200a03 05010000 00050100" \
+  -i "4a000001 2001FF00 C281FF10 00000000"
+
+=== TLP #1 ===
++----------+------------------+--------------------+
+| TLP Type | ConfType0ReadReq | 3DW no Data Header |
++----------+------------------+--------------------+
+...
++------------+--------------------+
+| TLP:       | 3DW no Data Header |
++------------+--------------------+
+| Req ID     | 0x20               |
+| Tag        | 0xA                |
+| Bus        | 0x5                |
+| Device     | 0x0                |
+| Function   | 0x1                |
+| Ext Reg Nr | 0x0                |
+| Reg Nr     | 0x0                |
++------------+--------------------+
+
+=== TLP #2 ===
++----------+---------+----------------------+
+| TLP Type | CplData | 3DW with Data Header |
++----------+---------+----------------------+
+...
++-----------------------------+----------------------+
+| TLP:                        | 3DW with Data Header |
++-----------------------------+----------------------+
+| Compl ID                    | 0x2001               |
+| Compl Status                | 0x7                  |
+| Byte Count Modified (PCI-X) | 0x1                  |
+| Byte Count                  | 0xF00                |
+| Req ID                      | 0xC281               |
+| Tag                         | 0xFF                 |
+| Lower Address               | 0x10                 |
++-----------------------------+----------------------+
+```
+
+### Limit with --count
+
+When you have many `-i` inputs but only want to inspect the first few:
+
+```bash
+rtlp-tool -i "..." -i "..." -i "..." --count 2
+```
+
 ## Installation
 
 ### Debian / Ubuntu — pre-built package (recommended)
