@@ -19,6 +19,7 @@ priority = "optional"
 assets = [
     ["target/release/rtlp-tool", "usr/bin/rtlp-tool", "755"],
     ["README.md", "usr/share/doc/rtlp-tool/README.md", "644"],
+    ["assets/rtlp-tool.1.gz", "usr/share/man/man1/rtlp-tool.1.gz", "644"],
 ]
 
 [[bin]]
