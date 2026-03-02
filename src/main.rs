@@ -10,6 +10,7 @@ use rtlp_lib::{new_mem_req, new_conf_req, new_cmpl_req, new_msg_req};
 
 use clap::{ArgEnum, CommandFactory, Parser};
 use clap_complete::Shell;
+use colored::Colorize;
 
 #[macro_use] extern crate prettytable;
 use prettytable::{Table, Row, Cell};
@@ -203,7 +204,11 @@ fn tlp_type_style(tlp_type: &str) -> &'static str {
 /// prettytable style_spec for common-header field values.
 fn header_val_style(name: &str, value: &str) -> &'static str {
     match name {
-        "Ep" if value != "0" => "Fr", // Error Poison bit set
+        "Ep" if value != "0" => "bFr", // bold red  — Error Poison bit set
+        "TC" if value != "0" => "Fy",  // yellow    — non-default traffic class
+        "TD" if value != "0" => "Fy",  // yellow    — ECRC digest present
+        "TH" if value != "0" => "Fc",  // cyan      — TLP processing hints active
+        "AT" if value != "0" => "Fc",  // cyan      — address translation active
         _ => "",
     }
 }
@@ -211,7 +216,7 @@ fn header_val_style(name: &str, value: &str) -> &'static str {
 /// prettytable style_spec for body field values.
 fn body_val_style(key: &str, value: &str) -> &'static str {
     match key {
-        "Compl Status" if value != "0x0" => "Fr", // non-zero completion status
+        "Compl Status" if value != "0x0" => "bFr", // bold red — non-OK completion
         _ => "",
     }
 }
@@ -424,18 +429,23 @@ impl TlpTool {
             Cell::new(&data.tlp_format),
         ]));
         if let Some(src) = &data.source {
-            t.add_row(row!["Source", src, ""]);
+            t.add_row(Row::new(vec![
+                Cell::new("Source").style_spec(if color { "b" } else { "" }),
+                Cell::new(src).style_spec(if color { "Fc" } else { "" }),
+                Cell::new(""),
+            ]));
         }
         t.printstd();
 
         // Common header fields
+        let name_style = if color { "b" } else { "" };
         let mut t = Table::new();
         t.set_format(*format::consts::FORMAT_NO_LINESEP_WITH_TITLE);
         t.set_titles(row!["Field Name", "Offset\n(bits)", "Length\n(bits)", "Value"]);
         for (name, offset, length, value) in &data.header_fields {
             let val_style = if color { header_val_style(name, value) } else { "" };
             t.add_row(Row::new(vec![
-                Cell::new(name),
+                Cell::new(name).style_spec(name_style),
                 Cell::new(offset),
                 Cell::new(length),
                 Cell::new(value).style_spec(val_style),
@@ -450,7 +460,7 @@ impl TlpTool {
         for (k, v) in &data.body_fields {
             let val_style = if color { body_val_style(k, v) } else { "" };
             t.add_row(Row::new(vec![
-                Cell::new(k),
+                Cell::new(k).style_spec(name_style),
                 Cell::new(v).style_spec(val_style),
             ]));
         }
@@ -508,6 +518,9 @@ impl TlpTool {
     // ── run ────────────────────────────────────────────────────────────────────
 
     fn run(&self) -> i32 {
+        // Configure the `colored` crate once — matches prettytable's own tty/NO_COLOR check.
+        colored::control::set_override(use_color());
+
         let limit = self.config.count.unwrap_or(self.config.inputs.len());
         let multiple = limit > 1 && self.config.output == OutputFormat::Table;
         let mut had_error = false;
@@ -524,7 +537,7 @@ impl TlpTool {
             let data = Self::collect_tlp(i + 1, &tlp, source.clone());
 
             if multiple {
-                println!("\n=== TLP #{} ===", i + 1);
+                println!("\n{}", format!("=== TLP #{} ===", i + 1).bold().yellow());
             }
             match self.config.output {
                 OutputFormat::Table => Self::render_table(&data),

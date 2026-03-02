@@ -19,6 +19,7 @@ priority = "optional"
 assets = [
     ["target/release/rtlp-tool", "usr/bin/rtlp-tool", "755"],
     ["README.md", "usr/share/doc/rtlp-tool/README.md", "644"],
+    ["assets/rtlp-tool.1.gz", "usr/share/man/man1/rtlp-tool.1.gz", "644"],
 ]
 
 [[bin]]
@@ -33,6 +34,7 @@ clap = { version = "3.1.18", features = ["derive"] }
 clap_complete = "3"
 clap_mangen = "0.1"
 prettytable-rs = "^0.10"
+colored = "2"
 
 [dev-dependencies]
 assert_cmd = "2"
