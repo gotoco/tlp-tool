@@ -34,6 +34,7 @@ clap = { version = "3.1.18", features = ["derive"] }
 clap_complete = "3"
 clap_mangen = "0.1"
 prettytable-rs = "^0.10"
+colored = "2"
 
 [dev-dependencies]
 assert_cmd = "2"
