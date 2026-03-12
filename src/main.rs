@@ -638,7 +638,14 @@ fn main() {
         args.input.into_iter().map(|s| (s, None)).collect()
 
     } else {
-        // Stdin fallback
+        // Stdin fallback — but if the user ran the tool interactively with no
+        // arguments at all, print help instead of silently blocking on stdin.
+        if std::io::stdin().is_terminal() {
+            let mut cmd = Args::command();
+            let _ = cmd.print_help();
+            eprintln!();
+            std::process::exit(0);
+        }
         read_lines_from(std::io::stdin().lock())
             .into_iter()
             .map(|l| (l, None))
