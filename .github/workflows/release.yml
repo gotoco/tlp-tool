@@ -38,6 +38,11 @@ jobs:
       - name: Install cargo-deb
         run: cargo install cargo-deb
 
+      - name: Generate man page
+        run: |
+          mkdir -p assets
+          ./target/release/rtlp-tool --man | gzip > assets/rtlp-tool.1.gz
+
       - name: Build .deb package
         run: cargo deb --no-build
 
@@ -51,7 +56,7 @@ jobs:
 
       - name: Rename artifacts
         run: |
-          cp target/release/rtlp_tool rtlp-tool-${{ steps.version.outputs.VERSION }}-${{ steps.arch.outputs.ARCH }}
+          cp target/release/rtlp-tool rtlp-tool-${{ steps.version.outputs.VERSION }}-${{ steps.arch.outputs.ARCH }}
           cp target/debian/*.deb rtlp-tool-${{ steps.version.outputs.VERSION }}-${{ steps.arch.outputs.ARCH }}.deb
 
       - name: Create GitHub Release
