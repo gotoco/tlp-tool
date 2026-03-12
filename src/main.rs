@@ -242,6 +242,12 @@ impl Config {
                 None => return Err(()),
             }
         }
+        // An odd number of nibbles cannot form a valid byte sequence.
+        // Without this check, chunks(2) would produce a final chunk of length 1
+        // and chunk[1] would panic with an array index out of bounds error.
+        if nibbles.len() % 2 != 0 {
+            return Err(());
+        }
         let mut result: Vec<u8> = Vec::new();
         for chunk in nibbles.chunks(2) {
             result.push((chunk[0] << 4) + chunk[1]);
@@ -570,6 +576,12 @@ fn main() {
         }
         std::io::stdout().write_all(&buf).unwrap();
         return;
+    }
+
+    // Mutually exclusive scan modes
+    if args.lspci && args.aer {
+        eprintln!("error: --lspci and --aer are mutually exclusive");
+        std::process::exit(1);
     }
 
     // Helper: read raw text lines from -i flags / -f file / stdin

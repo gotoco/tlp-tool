@@ -361,3 +361,41 @@ fn completions_bash_prints_and_exits_zero() {
         .success()
         .stdout(pred::contains("rtlp-tool"));
 }
+
+// ── Edge cases & regression tests ────────────────────────────────────────────
+
+/// An odd number of hex nibbles (e.g. a truncated DWord in a log) must produce
+/// a clean error message — NOT a panic / index-out-of-bounds crash.
+#[test]
+fn odd_length_hex_exits_nonzero_not_panic() {
+    cmd()
+        // "04000001 0000220" — last DWord is only 7 chars (odd nibble count)
+        .args(["-i", "04000001 0000220"])
+        .assert()
+        .failure()
+        .stderr(pred::contains("not valid hex"));
+}
+
+/// --aer and --lspci are mutually exclusive; using both must produce a clear
+/// error rather than silently ignoring --aer.
+#[test]
+fn aer_and_lspci_together_exits_nonzero() {
+    cmd()
+        .args(["--aer", "--lspci", "-f", "tests/fixtures/lspci_output.txt"])
+        .assert()
+        .failure()
+        .stderr(pred::contains("mutually exclusive"));
+}
+
+/// --count 0 is valid; it processes zero TLPs and exits successfully with no
+/// output (apart from the CSV header if --output csv is used).
+#[test]
+fn count_zero_produces_no_tlp_output() {
+    cmd()
+        .args(["-i", CONF_READ, "-i", CPL_DATA, "--count", "0"])
+        .assert()
+        .success()
+        // No TLP type names should appear
+        .stdout(pred::contains("ConfType0ReadReq").not())
+        .stdout(pred::contains("CplData").not());
+}
