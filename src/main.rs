@@ -105,10 +105,7 @@ fn extract_tlp_from_line(line: &str) -> Option<String> {
 fn extract_pci_device(line: &str) -> Option<String> {
     // lspci lines: "0000:01:00.0 Non-Volatile memory controller: ..."
     let trimmed = line.trim();
-    let (addr, rest) = match trimmed.split_once(' ') {
-        Some(pair) => pair,
-        None => return None,
-    };
+    let (addr, rest) = trimmed.split_once(' ')?;
     // addr must contain ':' and '.' and only hex/colon/dot chars
     if !addr.contains(':') || !addr.contains('.') {
         return None;
@@ -172,7 +169,7 @@ fn scan_lspci_lines(lines: &[String]) -> Vec<(String, Option<String>)> {
 fn read_lines_from<R: BufRead>(reader: R) -> Vec<String> {
     reader
         .lines()
-        .filter_map(|l| l.ok())
+        .map_while(Result::ok)
         .filter(|l| !l.trim().is_empty())
         .collect()
 }
