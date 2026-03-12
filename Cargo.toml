@@ -39,3 +39,11 @@ colored = "2"
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"
+
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/rtlp-tool", dest = "/usr/bin/rtlp-tool", mode = "755" },
+    { source = "README.md", dest = "/usr/share/doc/rtlp-tool/README.md", mode = "644" },
+    { source = "assets/rtlp-tool.1.gz", dest = "/usr/share/man/man1/rtlp-tool.1.gz", mode = "644" },
+    { source = "LICENSE", dest = "/usr/share/licenses/rtlp-tool/LICENSE", mode = "644" },
+]

@@ -1,5 +1,9 @@
-Rust TLP Tool 
+Rust TLP Tool
 =============
+
+[![CI](https://github.com/mmpg-x86/tlp-tool/actions/workflows/ci.yml/badge.svg)](https://github.com/mmpg-x86/tlp-tool/actions/workflows/ci.yml)
+[![Release](https://github.com/mmpg-x86/tlp-tool/actions/workflows/release.yml/badge.svg)](https://github.com/mmpg-x86/tlp-tool/actions/workflows/release.yml)
+[![crates.io](https://img.shields.io/crates/v/rtlp_tool.svg)](https://crates.io/crates/rtlp_tool)
 
 Simple Tool to parse PCI TLP headers into the human readable form.
 
@@ -29,10 +33,10 @@ lspci -s 01:00.0 -vv
                 HeaderLog: 04000001 0000220f 01070000 9eece789
 
 ```
-This problematic TLP Header "04000001 0000220f 01070000 9eece789" can be easily parsed by rtlp_tool
+This problematic TLP Header "04000001 0000220f 01070000 9eece789" can be easily parsed by rtlp-tool
 
 ```bash
-rtlp_tool -i "04000001 0000220f 01070000 9eece789"
+rtlp-tool -i "04000001 0000220f 01070000 9eece789"
 +----------+----------------------------+--------------------+
 | TLP Type | Type 0 Config Read Request | 3DW no Data Header |
 +----------+----------------------------+--------------------+
@@ -78,10 +82,10 @@ Below I show example from Linux kernel documentation `Documentation/PCI/pcieaer-
 0000:40:00.0:   TLP Header: 04000001 00200a03 05010000 00050100
 ```
 
-TLP Header `04000001 00200a03 05010000 00050100` can be parsed by rtlp_tool via:
+TLP Header `04000001 00200a03 05010000 00050100` can be parsed by rtlp-tool via:
 
 ```bash
-rtlp_tool -i "04000001 00200a03 05010000 00050100"
+rtlp-tool -i "04000001 00200a03 05010000 00050100"
 +----------+----------------------------+--------------------+
 | TLP Type | Type 0 Config Read Request | 3DW no Data Header |
 +----------+----------------------------+--------------------+
@@ -123,6 +127,7 @@ rtlp-tool [OPTIONS]
 
 Options:
   -i, --input <INPUT>        TLP hex string(s) to parse. May be specified multiple times.
+                             Each DWord may optionally be prefixed with 0x/0X.
                              Reads one TLP per line from stdin when omitted.
   -f, --file <FILE>          Read TLP hex strings from a file (one per line)
       --aer                  Scan input for AER TLP headers
@@ -135,6 +140,7 @@ Options:
   -c, --count <COUNT>        Process only the first N inputs (default: all)
       --output <FORMAT>      Output format: table (default), json, csv
       --completions <SHELL>  Print shell completion script [bash, zsh, fish, powershell]
+      --man                  Print man page in troff format and exit
   -h, --help                 Print help
   -V, --version              Print version
 ```
@@ -143,6 +149,22 @@ Options:
 
 ```bash
 rtlp-tool -i "04000001 00200a03 05010000 00050100"
+```
+
+### 0x-prefixed hex input
+
+Each DWord may optionally carry a `0x` / `0X` prefix — all of the
+following forms are accepted and produce identical output:
+
+```bash
+# bare hex (standard copy-paste from lspci / dmesg)
+rtlp-tool -i "04000001 0000220f 01070000 9eece789"
+
+# fully prefixed
+rtlp-tool -i "0x04000001 0x0000220f 0x01070000 0x9eece789"
+
+# mixed
+rtlp-tool -i "0x04000001 0000220f 0x01070000 9eece789"
 ```
 
 ### Parse multiple TLPs in one call
@@ -267,6 +289,33 @@ rtlp-tool -i "04000001 00200a03 05010000 00050100" --output json
 rtlp-tool -f tlps.txt --output csv | column -t -s,
 ```
 
+### Color output
+
+When stdout is a TTY the table output is automatically colorized to help
+spot relevant fields at a glance:
+
+| Color | Meaning |
+|-------|---------|
+| Blue  | Memory / IO / Atomic TLP types |
+| Cyan  | Configuration TLP types |
+| Magenta | Message TLP types |
+| Green | Completion TLP types |
+| Red   | Parse errors |
+| Bold red | `Ep` (Error Poison) bit set; non-OK `Compl Status` |
+| Yellow | Non-default Traffic Class (`TC`) or ECRC digest (`TD`) field |
+
+Color is suppressed automatically when:
+- stdout is not a TTY (e.g. piped to a file or another command), or
+- the `NO_COLOR` environment variable is set (any value).
+
+```bash
+# disable color explicitly
+NO_COLOR=1 rtlp-tool -i "04000001 0000220f 01070000 9eece789"
+
+# color is off automatically when redirecting
+rtlp-tool -i "04000001 0000220f 01070000 9eece789" > out.txt
+```
+
 ### Pipe from stdin
 
 When `-i` and `-f` are omitted the tool reads one TLP hex string per line
@@ -290,14 +339,36 @@ EOF
 
 | Code | Meaning |
 |------|---------|
-| `0`  | All TLPs parsed successfully |
-| `1`  | One or more TLPs contained an invalid type/format, or input was not valid hex |
+| `0`  | All TLPs parsed successfully (also returned by `--help`, `--version`, `--man`, `--completions`) |
+| `1`  | One or more TLPs had an invalid type or format |
+| `1`  | Input contained non-hex characters |
+| `1`  | Specified file could not be opened (`-f <FILE>`) |
+| `1`  | `--aer` mode: no `TLP Header:` / `HeaderLog:` lines found in input |
+| `1`  | `--lspci` mode: no non-zero `HeaderLog:` entries found in input |
+| `1`  | No input provided at all (empty stdin, no `-i`, no `-f`) |
 
 Useful for scripting:
 
 ```bash
 rtlp-tool -i "$header" && echo "TLP is valid" || echo "TLP parse error"
 ```
+
+### Man page
+
+`--man` prints the full man page in troff format and exits. Use it to
+install the page locally or view it directly with `man`:
+
+```bash
+# view immediately
+rtlp-tool --man | man -l -
+
+# install for the current user (Linux/macOS)
+rtlp-tool --man | gzip > ~/.local/share/man/man1/rtlp-tool.1.gz
+mandb ~/.local/share/man
+```
+
+The pre-built `.deb` package installs the man page automatically, so
+`man rtlp-tool` works out of the box on Debian/Ubuntu systems.
 
 ### Shell completions
 
@@ -312,26 +383,89 @@ rtlp-tool --completions zsh > ~/.zsh/completions/_rtlp-tool
 
 # fish
 rtlp-tool --completions fish > ~/.config/fish/completions/rtlp-tool.fish
+
+# powershell
+rtlp-tool --completions powershell >> $PROFILE
 ```
 
 ## Installation
 
-### Debian / Ubuntu — pre-built package (recommended)
+All release artifacts are built automatically by GitHub Actions and attached
+to every [GitHub Release](https://github.com/mmpg-x86/tlp-tool/releases).
+Replace `<VERSION>` with the tag you want, e.g. `v0.2.0`.
 
-Download the latest `.deb` from the [Releases page](https://github.com/gotoco/tlp-tool/releases) and install it:
+### Debian / Ubuntu (.deb)
 
 ```bash
-wget https://github.com/gotoco/tlp-tool/releases/latest/download/rtlp-tool-<VERSION>-amd64.deb
+wget https://github.com/mmpg-x86/tlp-tool/releases/latest/download/rtlp-tool-<VERSION>-amd64.deb
 sudo apt install ./rtlp-tool-<VERSION>-amd64.deb
 ```
 
-Replace `<VERSION>` with the release tag, e.g. `v0.2.0`.
-
-After install the binary is available as `rtlp-tool`:
+The `.deb` includes the binary, man page, and README. After install:
 
 ```bash
 rtlp-tool -i "04000001 0000220f 01070000 9eece789"
+man rtlp-tool
 ```
+
+### Fedora / RHEL / openSUSE (.rpm)
+
+```bash
+wget https://github.com/mmpg-x86/tlp-tool/releases/latest/download/rtlp-tool-<VERSION>-x86_64.rpm
+sudo rpm -i rtlp-tool-<VERSION>-x86_64.rpm
+# or with dnf:
+sudo dnf install ./rtlp-tool-<VERSION>-x86_64.rpm
+```
+
+### macOS — pre-built binary
+
+Download the tarball for your architecture:
+
+```bash
+# Apple Silicon (M1 / M2 / M3)
+curl -Lo rtlp-tool.tar.gz \
+  https://github.com/mmpg-x86/tlp-tool/releases/latest/download/rtlp-tool-macos-aarch64.tar.gz
+
+# Intel Mac
+curl -Lo rtlp-tool.tar.gz \
+  https://github.com/mmpg-x86/tlp-tool/releases/latest/download/rtlp-tool-macos-x86_64.tar.gz
+
+tar -xf rtlp-tool.tar.gz
+sudo mv rtlp-tool /usr/local/bin/
+rtlp-tool -i "04000001 0000220f 01070000 9eece789"
+```
+
+### FreeBSD — pre-built binary
+
+```bash
+fetch https://github.com/mmpg-x86/tlp-tool/releases/latest/download/rtlp-tool-freebsd-x86_64.tar.gz
+tar -xf rtlp-tool-freebsd-x86_64.tar.gz
+sudo mv rtlp-tool /usr/local/bin/
+```
+
+### Linux — static binary (any distro)
+
+The `linux-x86_64` and `linux-aarch64` tarballs are statically linked
+(musl libc) and run on any modern Linux without extra dependencies:
+
+```bash
+# x86_64
+curl -Lo rtlp-tool.tar.gz \
+  https://github.com/mmpg-x86/tlp-tool/releases/latest/download/rtlp-tool-linux-x86_64.tar.gz
+
+# aarch64 (Raspberry Pi 4, AWS Graviton, etc.)
+curl -Lo rtlp-tool.tar.gz \
+  https://github.com/mmpg-x86/tlp-tool/releases/latest/download/rtlp-tool-linux-aarch64.tar.gz
+
+tar -xf rtlp-tool.tar.gz
+sudo mv rtlp-tool /usr/local/bin/
+```
+
+### Windows — pre-built binary
+
+Download `rtlp-tool-windows-x86_64.zip` from the
+[Releases page](https://github.com/mmpg-x86/tlp-tool/releases), extract
+`rtlp-tool.exe`, and place it somewhere on your `PATH`.
 
 ### From crates.io
 
@@ -341,16 +475,10 @@ Requires Rust toolchain installed ([rustup.rs](https://rustup.rs)):
 cargo install rtlp_tool
 ```
 
-After install the binary is available as `rtlp-tool`:
-
-```bash
-rtlp-tool -i "04000001 0000220f 01070000 9eece789"
-```
-
 ### Build from source
 
 ```bash
-git clone https://github.com/gotoco/tlp-tool.git
+git clone https://github.com/mmpg-x86/tlp-tool.git
 cd tlp-tool
 cargo build --release
 ./target/release/rtlp-tool -i "04000001 0000220f 01070000 9eece789"
@@ -360,7 +488,10 @@ cargo build --release
 
  * [rtlp-lib](https://github.com/gotoco/rust_tlplib) — PCI TLP parsing library
  * [clap](https://github.com/clap-rs/clap) — command line argument parser
+ * [clap_complete](https://github.com/clap-rs/clap/tree/master/clap_complete) — shell completion script generation
+ * [clap_mangen](https://github.com/clap-rs/clap/tree/master/clap_mangen) — man page generation in troff format
  * [prettytable-rs](https://github.com/phsym/prettytable-rs) — terminal table formatting
+ * [colored](https://github.com/colored-rs/colored) — terminal color output
 
 ## License
 
