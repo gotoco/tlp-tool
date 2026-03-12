@@ -374,6 +374,9 @@ rtlp-tool --completions zsh > ~/.zsh/completions/_rtlp-tool
 
 # fish
 rtlp-tool --completions fish > ~/.config/fish/completions/rtlp-tool.fish
+
+# powershell
+rtlp-tool --completions powershell >> $PROFILE
 ```
 
 ## Installation
