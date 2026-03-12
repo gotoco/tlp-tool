@@ -123,6 +123,7 @@ rtlp-tool [OPTIONS]
 
 Options:
   -i, --input <INPUT>        TLP hex string(s) to parse. May be specified multiple times.
+                             Each DWord may optionally be prefixed with 0x/0X.
                              Reads one TLP per line from stdin when omitted.
   -f, --file <FILE>          Read TLP hex strings from a file (one per line)
       --aer                  Scan input for AER TLP headers
@@ -144,6 +145,22 @@ Options:
 
 ```bash
 rtlp-tool -i "04000001 00200a03 05010000 00050100"
+```
+
+### 0x-prefixed hex input
+
+Each DWord may optionally carry a `0x` / `0X` prefix — all of the
+following forms are accepted and produce identical output:
+
+```bash
+# bare hex (standard copy-paste from lspci / dmesg)
+rtlp-tool -i "04000001 0000220f 01070000 9eece789"
+
+# fully prefixed
+rtlp-tool -i "0x04000001 0x0000220f 0x01070000 0x9eece789"
+
+# mixed
+rtlp-tool -i "0x04000001 0000220f 0x01070000 9eece789"
 ```
 
 ### Parse multiple TLPs in one call
