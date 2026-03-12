@@ -335,8 +335,13 @@ EOF
 
 | Code | Meaning |
 |------|---------|
-| `0`  | All TLPs parsed successfully |
-| `1`  | One or more TLPs contained an invalid type/format, or input was not valid hex |
+| `0`  | All TLPs parsed successfully (also returned by `--help`, `--version`, `--man`, `--completions`) |
+| `1`  | One or more TLPs had an invalid type or format |
+| `1`  | Input contained non-hex characters |
+| `1`  | Specified file could not be opened (`-f <FILE>`) |
+| `1`  | `--aer` mode: no `TLP Header:` / `HeaderLog:` lines found in input |
+| `1`  | `--lspci` mode: no non-zero `HeaderLog:` entries found in input |
+| `1`  | No input provided at all (empty stdin, no `-i`, no `-f`) |
 
 Useful for scripting:
 
