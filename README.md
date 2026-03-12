@@ -29,10 +29,10 @@ lspci -s 01:00.0 -vv
                 HeaderLog: 04000001 0000220f 01070000 9eece789
 
 ```
-This problematic TLP Header "04000001 0000220f 01070000 9eece789" can be easily parsed by rtlp_tool
+This problematic TLP Header "04000001 0000220f 01070000 9eece789" can be easily parsed by rtlp-tool
 
 ```bash
-rtlp_tool -i "04000001 0000220f 01070000 9eece789"
+rtlp-tool -i "04000001 0000220f 01070000 9eece789"
 +----------+----------------------------+--------------------+
 | TLP Type | Type 0 Config Read Request | 3DW no Data Header |
 +----------+----------------------------+--------------------+
@@ -78,10 +78,10 @@ Below I show example from Linux kernel documentation `Documentation/PCI/pcieaer-
 0000:40:00.0:   TLP Header: 04000001 00200a03 05010000 00050100
 ```
 
-TLP Header `04000001 00200a03 05010000 00050100` can be parsed by rtlp_tool via:
+TLP Header `04000001 00200a03 05010000 00050100` can be parsed by rtlp-tool via:
 
 ```bash
-rtlp_tool -i "04000001 00200a03 05010000 00050100"
+rtlp-tool -i "04000001 00200a03 05010000 00050100"
 +----------+----------------------------+--------------------+
 | TLP Type | Type 0 Config Read Request | 3DW no Data Header |
 +----------+----------------------------+--------------------+
