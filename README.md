@@ -1,5 +1,9 @@
-Rust TLP Tool 
+Rust TLP Tool
 =============
+
+[![CI](https://github.com/mmpg-x86/tlp-tool/actions/workflows/ci.yml/badge.svg)](https://github.com/mmpg-x86/tlp-tool/actions/workflows/ci.yml)
+[![Release](https://github.com/mmpg-x86/tlp-tool/actions/workflows/release.yml/badge.svg)](https://github.com/mmpg-x86/tlp-tool/actions/workflows/release.yml)
+[![crates.io](https://img.shields.io/crates/v/rtlp_tool.svg)](https://crates.io/crates/rtlp_tool)
 
 Simple Tool to parse PCI TLP headers into the human readable form.
 
@@ -386,22 +390,82 @@ rtlp-tool --completions powershell >> $PROFILE
 
 ## Installation
 
-### Debian / Ubuntu — pre-built package (recommended)
+All release artifacts are built automatically by GitHub Actions and attached
+to every [GitHub Release](https://github.com/mmpg-x86/tlp-tool/releases).
+Replace `<VERSION>` with the tag you want, e.g. `v0.2.0`.
 
-Download the latest `.deb` from the [Releases page](https://github.com/gotoco/tlp-tool/releases) and install it:
+### Debian / Ubuntu (.deb)
 
 ```bash
-wget https://github.com/gotoco/tlp-tool/releases/latest/download/rtlp-tool-<VERSION>-amd64.deb
+wget https://github.com/mmpg-x86/tlp-tool/releases/latest/download/rtlp-tool-<VERSION>-amd64.deb
 sudo apt install ./rtlp-tool-<VERSION>-amd64.deb
 ```
 
-Replace `<VERSION>` with the release tag, e.g. `v0.2.0`.
-
-After install the binary is available as `rtlp-tool`:
+The `.deb` includes the binary, man page, and README. After install:
 
 ```bash
 rtlp-tool -i "04000001 0000220f 01070000 9eece789"
+man rtlp-tool
 ```
+
+### Fedora / RHEL / openSUSE (.rpm)
+
+```bash
+wget https://github.com/mmpg-x86/tlp-tool/releases/latest/download/rtlp-tool-<VERSION>-x86_64.rpm
+sudo rpm -i rtlp-tool-<VERSION>-x86_64.rpm
+# or with dnf:
+sudo dnf install ./rtlp-tool-<VERSION>-x86_64.rpm
+```
+
+### macOS — pre-built binary
+
+Download the tarball for your architecture:
+
+```bash
+# Apple Silicon (M1 / M2 / M3)
+curl -Lo rtlp-tool.tar.gz \
+  https://github.com/mmpg-x86/tlp-tool/releases/latest/download/rtlp-tool-macos-aarch64.tar.gz
+
+# Intel Mac
+curl -Lo rtlp-tool.tar.gz \
+  https://github.com/mmpg-x86/tlp-tool/releases/latest/download/rtlp-tool-macos-x86_64.tar.gz
+
+tar -xf rtlp-tool.tar.gz
+sudo mv rtlp-tool /usr/local/bin/
+rtlp-tool -i "04000001 0000220f 01070000 9eece789"
+```
+
+### FreeBSD — pre-built binary
+
+```bash
+fetch https://github.com/mmpg-x86/tlp-tool/releases/latest/download/rtlp-tool-freebsd-x86_64.tar.gz
+tar -xf rtlp-tool-freebsd-x86_64.tar.gz
+sudo mv rtlp-tool /usr/local/bin/
+```
+
+### Linux — static binary (any distro)
+
+The `linux-x86_64` and `linux-aarch64` tarballs are statically linked
+(musl libc) and run on any modern Linux without extra dependencies:
+
+```bash
+# x86_64
+curl -Lo rtlp-tool.tar.gz \
+  https://github.com/mmpg-x86/tlp-tool/releases/latest/download/rtlp-tool-linux-x86_64.tar.gz
+
+# aarch64 (Raspberry Pi 4, AWS Graviton, etc.)
+curl -Lo rtlp-tool.tar.gz \
+  https://github.com/mmpg-x86/tlp-tool/releases/latest/download/rtlp-tool-linux-aarch64.tar.gz
+
+tar -xf rtlp-tool.tar.gz
+sudo mv rtlp-tool /usr/local/bin/
+```
+
+### Windows — pre-built binary
+
+Download `rtlp-tool-windows-x86_64.zip` from the
+[Releases page](https://github.com/mmpg-x86/tlp-tool/releases), extract
+`rtlp-tool.exe`, and place it somewhere on your `PATH`.
 
 ### From crates.io
 
@@ -411,16 +475,10 @@ Requires Rust toolchain installed ([rustup.rs](https://rustup.rs)):
 cargo install rtlp_tool
 ```
 
-After install the binary is available as `rtlp-tool`:
-
-```bash
-rtlp-tool -i "04000001 0000220f 01070000 9eece789"
-```
-
 ### Build from source
 
 ```bash
-git clone https://github.com/gotoco/tlp-tool.git
+git clone https://github.com/mmpg-x86/tlp-tool.git
 cd tlp-tool
 cargo build --release
 ./target/release/rtlp-tool -i "04000001 0000220f 01070000 9eece789"
