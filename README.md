@@ -135,6 +135,7 @@ Options:
   -c, --count <COUNT>        Process only the first N inputs (default: all)
       --output <FORMAT>      Output format: table (default), json, csv
       --completions <SHELL>  Print shell completion script [bash, zsh, fish, powershell]
+      --man                  Print man page in troff format and exit
   -h, --help                 Print help
   -V, --version              Print version
 ```
@@ -298,6 +299,23 @@ Useful for scripting:
 ```bash
 rtlp-tool -i "$header" && echo "TLP is valid" || echo "TLP parse error"
 ```
+
+### Man page
+
+`--man` prints the full man page in troff format and exits. Use it to
+install the page locally or view it directly with `man`:
+
+```bash
+# view immediately
+rtlp-tool --man | man -l -
+
+# install for the current user (Linux/macOS)
+rtlp-tool --man | gzip > ~/.local/share/man/man1/rtlp-tool.1.gz
+mandb ~/.local/share/man
+```
+
+The pre-built `.deb` package installs the man page automatically, so
+`man rtlp-tool` works out of the box on Debian/Ubuntu systems.
 
 ### Shell completions
 
