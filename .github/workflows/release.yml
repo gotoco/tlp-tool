@@ -5,6 +5,15 @@ on:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
 
+  # Allow triggering a release manually from the GitHub Actions UI
+  # (useful for re-running a failed release or publishing a hotfix)
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. v0.2.1) — must already exist in the repo'
+        required: true
+        type: string
+
 permissions:
   contents: write
 
