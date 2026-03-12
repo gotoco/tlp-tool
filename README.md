@@ -422,7 +422,10 @@ cargo build --release
 
  * [rtlp-lib](https://github.com/gotoco/rust_tlplib) — PCI TLP parsing library
  * [clap](https://github.com/clap-rs/clap) — command line argument parser
+ * [clap_complete](https://github.com/clap-rs/clap/tree/master/clap_complete) — shell completion script generation
+ * [clap_mangen](https://github.com/clap-rs/clap/tree/master/clap_mangen) — man page generation in troff format
  * [prettytable-rs](https://github.com/phsym/prettytable-rs) — terminal table formatting
+ * [colored](https://github.com/colored-rs/colored) — terminal color output
 
 ## License
 
