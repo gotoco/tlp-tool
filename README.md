@@ -285,6 +285,33 @@ rtlp-tool -i "04000001 00200a03 05010000 00050100" --output json
 rtlp-tool -f tlps.txt --output csv | column -t -s,
 ```
 
+### Color output
+
+When stdout is a TTY the table output is automatically colorized to help
+spot relevant fields at a glance:
+
+| Color | Meaning |
+|-------|---------|
+| Blue  | Memory / IO / Atomic TLP types |
+| Cyan  | Configuration TLP types |
+| Magenta | Message TLP types |
+| Green | Completion TLP types |
+| Red   | Parse errors |
+| Bold red | `Ep` (Error Poison) bit set; non-OK `Compl Status` |
+| Yellow | Non-default Traffic Class (`TC`) or ECRC digest (`TD`) field |
+
+Color is suppressed automatically when:
+- stdout is not a TTY (e.g. piped to a file or another command), or
+- the `NO_COLOR` environment variable is set (any value).
+
+```bash
+# disable color explicitly
+NO_COLOR=1 rtlp-tool -i "04000001 0000220f 01070000 9eece789"
+
+# color is off automatically when redirecting
+rtlp-tool -i "04000001 0000220f 01070000 9eece789" > out.txt
+```
+
 ### Pipe from stdin
 
 When `-i` and `-f` are omitted the tool reads one TLP hex string per line
