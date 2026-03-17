@@ -137,6 +137,10 @@ Options:
                               address; typical dmesg-style AER lines will not set Source)
       --lspci                Parse lspci -vvv output: extract non-zero HeaderLog entries
                              and annotate each TLP with the device it belongs to
+      --flit                 Parse input as PCIe 6.0 flit-mode TLPs.
+                             Flit mode uses a flat 8-bit type code in DW0[7:0] instead
+                             of the non-flit Fmt[2:0]|Type[4:0] split, and supports
+                             Optional Header Carriers (OHC). Default: non-flit.
   -c, --count <COUNT>        Process only the first N inputs (default: all)
       --output <FORMAT>      Output format: table (default), json, csv
       --completions <SHELL>  Print shell completion script [bash, zsh, fish, powershell]
@@ -274,6 +278,81 @@ Example output:
 ...
 ```
 
+### Flit Mode (PCIe 6.0)
+
+PCIe 6.0 introduced **flit-mode** TLP framing. In flit mode the DW0 encoding
+is **completely different** from PCIe 1.0–5.0:
+
+| Field | Non-flit (PCIe 1.0–5.0) | Flit (PCIe 6.0) |
+|-------|------------------------|-----------------|
+| DW0[7:5] | Fmt (3-bit format) | — |
+| DW0[4:0] | Type (5-bit type) | — |
+| DW0[7:0] | — | **8-bit flat type code** |
+| DW0[15:8] | TC / Attr / LN / TH / … | OHC bitmap |
+| DW0[25:16] | Length (10-bit) | Payload length (DWs) |
+
+Pass `--flit` to tell rtlp-tool to use flit-mode framing:
+
+```bash
+# Flit NOP (type code 0x00)
+rtlp-tool --flit -i "00 00 00 00"
+
+# Flit Memory Read 32-bit (type code 0x03)
+rtlp-tool --flit -i "03 00 00 01 01 00 0A FF AB CD 12 34"
+```
+
+Example output for a flit MemRead32:
+
+```
++----------+----------------------+----------------------+
+| TLP Type | Memory Read (32-bit) | Flit Mode (PCIe 6.0) |
++----------+----------------------+----------------------+
++------------+--------+--------+----------------------------+
+| Field Name | Offset | Length | Value                      |
+|            | (bits) | (bits) |                            |
++------------+--------+--------+----------------------------+
+| Type Code  | 0      | 8      | 0x03  (Memory Read 32-bit) |
+| OHC        | 8      | 8      | 0x00                       |
+| OHC Count  | -      | -      | 0 extension DW(s)          |
+| Length     | 16     | 10     | 1 DW(s)                    |
++------------+--------+--------+----------------------------+
++-----------+----------------------+
+| Flit TLP: | Flit Mode (PCIe 6.0) |
++-----------+----------------------+
+| DW0       | 0x03000001           |
+| DW1       | 0x01000AFF           |
+| DW2       | 0xABCD1234           |
++-----------+----------------------+
+```
+
+JSON output gains a `flit_mode` boolean field:
+
+```bash
+rtlp-tool --flit -i "03 00 00 01 01 00 0A FF AB CD 12 34" --output json
+# → {"index":1,"tlp_type":"Memory Read (32-bit)","tlp_format":"Flit Mode (PCIe 6.0)","flit_mode":true,...}
+```
+
+Without `--flit` the tool defaults to non-flit mode — all existing scripts
+and pipelines continue to work unchanged.
+
+**Supported flit type codes** (rtlp-lib 0.5.0):
+
+| Code | Type |
+|------|------|
+| `0x00` | NOP |
+| `0x03` | Memory Read (32-bit) |
+| `0x22` | UIO Memory Read (64-bit) |
+| `0x30` | Message routed to RC |
+| `0x40` | Memory Write (32-bit) |
+| `0x42` | I/O Write |
+| `0x44` | Config Type 0 Write |
+| `0x4C` | FetchAdd AtomicOp (32-bit) |
+| `0x4E` | CompareSwap AtomicOp (32-bit) |
+| `0x5B` | Deferrable Memory Write (32-bit) |
+| `0x61` | UIO Memory Write (64-bit) |
+| `0x70` | Message with Data routed to RC |
+| `0x8D` | Local TLP Prefix |
+
 ### Output format
 
 Three formats are supported via `--output`:
@@ -392,7 +471,7 @@ rtlp-tool --completions powershell >> $PROFILE
 
 All release artifacts are built automatically by GitHub Actions and attached
 to every [GitHub Release](https://github.com/mmpg-x86/tlp-tool/releases).
-Replace `<VERSION>` with the tag you want, e.g. `v0.2.0`.
+Replace `<VERSION>` with the tag you want, e.g. `v0.5.0`.
 
 ### Debian / Ubuntu (.deb)
 
