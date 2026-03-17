@@ -1,11 +1,11 @@
 [package]
 name = "rtlp_tool"
-version = "0.2.0"
+version = "0.5.0"
 edition = "2024"
 authors = ["Maciej Grochowski <maciej.grochowski@pm.me>"]
 description = "CLI tool for parsing and displaying PCI Express TLP packet headers"
 license = "BSD-3-Clause"
-repository = "https://github.com/gotoco/tlp-tool"
+repository = "https://github.com/mmpg-x86/tlp-tool"
 
 [package.metadata.deb]
 maintainer = "Maciej Grochowski <maciej.grochowski@pm.me>"
@@ -29,7 +29,7 @@ path = "src/main.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-rtlp-lib = "0.3.0"
+rtlp-lib = "0.5.0"
 clap = { version = "3.1.18", features = ["derive"] }
 clap_complete = "3"
 clap_mangen = "0.1"

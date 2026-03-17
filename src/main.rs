@@ -5,16 +5,18 @@ use std::io::IsTerminal;
 use std::io::Write;
 use std::result::Result;
 
-use rtlp_lib::{TlpPacket, TlpPacketHeader, TlpType, TlpFmt};
-use rtlp_lib::{new_mem_req, new_conf_req, new_cmpl_req, new_msg_req};
+use rtlp_lib::FlitDW0;
+use rtlp_lib::{TlpFmt, TlpMode, TlpPacket, TlpType};
+use rtlp_lib::{new_cmpl_req, new_conf_req, new_mem_req, new_msg_req};
 
 use clap::{ArgEnum, CommandFactory, Parser};
 use clap_complete::Shell;
 use colored::Colorize;
 
-#[macro_use] extern crate prettytable;
-use prettytable::{Table, Row, Cell};
+#[macro_use]
+extern crate prettytable;
 use prettytable::format;
+use prettytable::{Cell, Row, Table};
 
 // ── Output format ─────────────────────────────────────────────────────────────
 
@@ -48,6 +50,13 @@ struct Args {
     #[clap(long)]
     lspci: bool,
 
+    /// Parse input as PCIe 6.0 flit-mode TLPs.
+    /// By default the tool uses non-flit (PCIe 1.0–5.0) framing.
+    /// Flit mode uses a completely different DW0 type-code encoding
+    /// (flat 8-bit code in DW0[7:0]) and optional header extensions (OHC).
+    #[clap(long)]
+    flit: bool,
+
     /// Process only the first N inputs (default: all)
     #[clap(short, long)]
     count: Option<usize>,
@@ -76,6 +85,8 @@ struct TlpData {
     header_fields: Vec<(&'static str, &'static str, &'static str, String)>,
     /// (key, value)
     body_fields: Vec<(String, String)>,
+    /// true when parsed in flit mode (PCIe 6.0)
+    is_flit: bool,
 }
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -85,6 +96,8 @@ struct Config {
     inputs: Vec<(Vec<u8>, Option<String>)>,
     count: Option<usize>,
     output: OutputFormat,
+    /// true → parse with TlpMode::Flit (PCIe 6.0); false → TlpMode::NonFlit
+    flit: bool,
 }
 
 // ── AER / lspci scanner ───────────────────────────────────────────────────────
@@ -110,7 +123,9 @@ fn extract_pci_device(line: &str) -> Option<String> {
     if !addr.contains(':') || !addr.contains('.') {
         return None;
     }
-    let ok = addr.chars().all(|c| c.is_ascii_hexdigit() || c == ':' || c == '.');
+    let ok = addr
+        .chars()
+        .all(|c| c.is_ascii_hexdigit() || c == ':' || c == '.');
     if !ok {
         return None;
     }
@@ -135,9 +150,7 @@ fn scan_aer_lines(lines: &[String]) -> Vec<(String, Option<String>)> {
 // ── Input helpers ─────────────────────────────────────────────────────────────
 
 fn is_zero_header(hex: &str) -> bool {
-    hex.chars()
-        .filter(|c| !c.is_whitespace())
-        .all(|c| c == '0')
+    hex.chars().filter(|c| !c.is_whitespace()).all(|c| c == '0')
 }
 
 /// Parse `lspci -vvv` output: extract HeaderLog entries that are non-zero,
@@ -183,14 +196,23 @@ fn use_color() -> bool {
 
 /// prettytable style_spec string for the TLP type cell.
 fn tlp_type_style(tlp_type: &str) -> &'static str {
-    if tlp_type.starts_with("Mem") || tlp_type.starts_with("IO") || tlp_type.contains("Atomic") {
+    if tlp_type.starts_with("Mem")
+        || tlp_type.starts_with("IO")
+        || tlp_type.contains("Atomic")
+        || tlp_type.contains("Memory")
+        || tlp_type.contains("UIO")
+        || tlp_type.contains("I/O")
+        || tlp_type.starts_with("Deferrable")
+    {
         "Fb" // blue — memory / IO / atomic
-    } else if tlp_type.starts_with("Conf") {
+    } else if tlp_type.starts_with("Conf") || tlp_type.contains("Config") {
         "Fc" // cyan — configuration
-    } else if tlp_type.starts_with("Msg") {
+    } else if tlp_type.starts_with("Msg") || tlp_type.contains("Message") {
         "Fm" // magenta — message
     } else if tlp_type.starts_with("Cpl") {
         "Fg" // green — completion
+    } else if tlp_type == "NOP" || tlp_type.contains("Local TLP Prefix") {
+        "" // no colour — flit NOP / prefix
     } else if tlp_type.starts_with("Error") {
         "Fr" // red — parse error
     } else {
@@ -198,7 +220,7 @@ fn tlp_type_style(tlp_type: &str) -> &'static str {
     }
 }
 
-/// prettytable style_spec for common-header field values.
+/// prettytable style_spec for common-header field values (non-flit only).
 fn header_val_style(name: &str, value: &str) -> &'static str {
     match name {
         "Ep" if value != "0" => "bFr", // bold red  — Error Poison bit set
@@ -210,7 +232,7 @@ fn header_val_style(name: &str, value: &str) -> &'static str {
     }
 }
 
-/// prettytable style_spec for body field values.
+/// prettytable style_spec for body field values (non-flit only).
 fn body_val_style(key: &str, value: &str) -> &'static str {
     match key {
         "Compl Status" if value != "0x0" => "bFr", // bold red — non-OK completion
@@ -229,7 +251,11 @@ impl Config {
         // Strip optional 0x/0X prefix from each whitespace-separated token,
         // then concatenate — allows inputs like "0x04000001 0x0000220f ..."
         s.split_whitespace()
-            .map(|tok| tok.strip_prefix("0x").or_else(|| tok.strip_prefix("0X")).unwrap_or(tok))
+            .map(|tok| {
+                tok.strip_prefix("0x")
+                    .or_else(|| tok.strip_prefix("0X"))
+                    .unwrap_or(tok)
+            })
             .collect()
     }
 
@@ -242,6 +268,10 @@ impl Config {
                 None => return Err(()),
             }
         }
+        // An odd number of nibbles cannot form a valid byte sequence.
+        if !nibbles.len().is_multiple_of(2) {
+            return Err(());
+        }
         let mut result: Vec<u8> = Vec::new();
         for chunk in nibbles.chunks(2) {
             result.push((chunk[0] << 4) + chunk[1]);
@@ -253,6 +283,7 @@ impl Config {
         raw_inputs: Vec<(String, Option<String>)>,
         count: Option<usize>,
         output: OutputFormat,
+        flit: bool,
     ) -> Result<Config, ParseConfigError> {
         let mut inputs = Vec::new();
         for (i, (raw, source)) in raw_inputs.into_iter().enumerate() {
@@ -262,7 +293,12 @@ impl Config {
                 Err(()) => return Err(ParseConfigError::InvalidInput(i + 1)),
             }
         }
-        Ok(Config { inputs, count, output })
+        Ok(Config {
+            inputs,
+            count,
+            output,
+            flit,
+        })
     }
 }
 
@@ -277,42 +313,80 @@ impl TlpTool {
         TlpTool { config: cfg }
     }
 
-    // ── collect methods ────────────────────────────────────────────────────────
+    // ── collect methods (non-flit, PCIe 1.0 – 5.0) ────────────────────────────
 
+    /// Extract DW0 bit-fields from raw packet bytes (non-flit PCIe 1.0–5.0).
+    ///
+    /// `TlpPacketHeader`'s individual field getters are `pub(crate)` in
+    /// rtlp-lib ≥ 0.5.0, so we extract the standard PCIe DW0 fields directly
+    /// from the raw bytes using the spec-defined bit layout:
+    ///
+    /// ```text
+    /// byte 0 (DW0[31:24]): Fmt[2:0] = bits[7:5],  Type[4:0] = bits[4:0]
+    /// byte 1 (DW0[23:16]): T9=b7, TC=[6:4], T8=b3, Attr_b2=b2, LN=b1, TH=b0
+    /// byte 2 (DW0[15:8]):  Td=b7, Ep=b6, Attr=[5:4], AT=[3:2], Len_hi=[1:0]
+    /// byte 3 (DW0[7:0]):   Length[7:0]
+    /// ```
     fn collect_header_fields(
-        hdr: &TlpPacketHeader,
+        data: &[u8],
     ) -> Vec<(&'static str, &'static str, &'static str, String)> {
+        if data.len() < 4 {
+            return vec![("Error", "-", "-", "Header too short (< 4 bytes)".into())];
+        }
+        let (b0, b1, b2, b3) = (data[0], data[1], data[2], data[3]);
         vec![
-            ("Fmt",     "0",  "3",  format!("{}", hdr.get_format())),
-            ("Type",    "3",  "5",  format!("{}", hdr.get_type())),
-            ("T9",      "8",  "1",  format!("{}", hdr.get_t9())),
-            ("TC",      "9",  "3",  format!("{}", hdr.get_tc())),
-            ("T8",      "12", "1",  format!("{}", hdr.get_t8())),
-            ("Attr_b2", "13", "1",  format!("{}", hdr.get_attr_b2())),
-            ("LN",      "14", "1",  format!("{}", hdr.get_ln())),
-            ("TH",      "15", "1",  format!("{}", hdr.get_th())),
-            ("Td",      "16", "1",  format!("{}", hdr.get_td())),
-            ("Ep",      "17", "1",  format!("{}", hdr.get_ep())),
-            ("Attr",    "18", "2",  format!("{}", hdr.get_attr())),
-            ("AT",      "20", "2",  format!("{}", hdr.get_at())),
-            ("Length",  "22", "10", format!("{}", hdr.get_length())),
+            ("Fmt", "0", "3", format!("{}", (b0 >> 5) & 0x7)),
+            ("Type", "3", "5", format!("{}", b0 & 0x1F)),
+            ("T9", "8", "1", format!("{}", (b1 >> 7) & 0x1)),
+            ("TC", "9", "3", format!("{}", (b1 >> 4) & 0x7)),
+            ("T8", "12", "1", format!("{}", (b1 >> 3) & 0x1)),
+            ("Attr_b2", "13", "1", format!("{}", (b1 >> 2) & 0x1)),
+            ("LN", "14", "1", format!("{}", (b1 >> 1) & 0x1)),
+            ("TH", "15", "1", format!("{}", b1 & 0x1)),
+            ("TD", "16", "1", format!("{}", (b2 >> 7) & 0x1)),
+            ("Ep", "17", "1", format!("{}", (b2 >> 6) & 0x1)),
+            ("Attr", "18", "2", format!("{}", (b2 >> 4) & 0x3)),
+            ("AT", "20", "2", format!("{}", (b2 >> 2) & 0x3)),
+            (
+                "Length",
+                "22",
+                "10",
+                format!("{}", (((b2 as u32) & 0x3) << 8) | b3 as u32),
+            ),
         ]
     }
 
     fn collect_mem_req(tlp: &TlpPacket) -> Vec<(String, String)> {
-        let tlpf = tlp.get_tlp_format();
-        let mr = new_mem_req(tlp.get_data(), &tlpf);
+        let tlpf = match tlp.tlp_format() {
+            Ok(f) => f,
+            Err(e) => {
+                return vec![(
+                    "Error".into(),
+                    format!("Cannot determine TLP format: {:?}", e),
+                )];
+            }
+        };
+        let mr = match new_mem_req(tlp.data().to_vec(), &tlpf) {
+            Ok(r) => r,
+            Err(e) => return vec![("Error".into(), format!("Cannot parse mem request: {:?}", e))],
+        };
         let is_4dw = matches!(tlpf, TlpFmt::NoDataHeader4DW | TlpFmt::WithDataHeader4DW);
         let addr = mr.address();
         let mut fields = vec![
-            ("Req ID".into(),      format!("{:#X}", mr.req_id())),
-            ("Tag".into(),         format!("{:#X}", mr.tag())),
-            ("Last DW BE".into(),  format!("{:#X}", mr.ldwbe())),
+            ("Req ID".into(), format!("{:#X}", mr.req_id())),
+            ("Tag".into(), format!("{:#X}", mr.tag())),
+            ("Last DW BE".into(), format!("{:#X}", mr.ldwbe())),
             ("First DW BE".into(), format!("{:#X}", mr.fdwbe())),
         ];
         if is_4dw {
-            fields.push(("Addr High (DW2)".into(), format!("{:#010X}", (addr >> 32) as u32)));
-            fields.push(("Addr Low  (DW3)".into(), format!("{:#010X}", (addr & 0xFFFF_FFFF) as u32)));
+            fields.push((
+                "Addr High (DW2)".into(),
+                format!("{:#010X}", (addr >> 32) as u32),
+            ));
+            fields.push((
+                "Addr Low  (DW3)".into(),
+                format!("{:#010X}", (addr & 0xFFFF_FFFF) as u32),
+            ));
         } else {
             fields.push(("Address (32b)".into(), format!("{:#010X}", addr as u32)));
         }
@@ -320,57 +394,98 @@ impl TlpTool {
     }
 
     fn collect_cfg_req(tlp: &TlpPacket) -> Vec<(String, String)> {
-        let tlpf = tlp.get_tlp_format();
+        let tlpf = match tlp.tlp_format() {
+            Ok(f) => f,
+            Err(e) => {
+                return vec![(
+                    "Error".into(),
+                    format!("Cannot determine TLP format: {:?}", e),
+                )];
+            }
+        };
         if tlpf == TlpFmt::NoDataHeader4DW || tlpf == TlpFmt::WithDataHeader4DW {
-            return vec![("Error".into(), "Configuration Requests are always 3DW".into())];
+            return vec![(
+                "Error".into(),
+                "Configuration Requests are always 3DW".into(),
+            )];
         }
-        let cfg = new_conf_req(tlp.get_data(), &tlpf);
+        let cfg = match new_conf_req(tlp.data().to_vec()) {
+            Ok(c) => c,
+            Err(e) => {
+                return vec![(
+                    "Error".into(),
+                    format!("Cannot parse config request: {:?}", e),
+                )];
+            }
+        };
         vec![
-            ("Req ID".into(),     format!("{:#X}", cfg.req_id())),
-            ("Tag".into(),        format!("{:#X}", cfg.tag())),
-            ("Bus".into(),        format!("{:#X}", cfg.bus_nr())),
-            ("Device".into(),     format!("{:#X}", cfg.dev_nr())),
-            ("Function".into(),   format!("{:#X}", cfg.func_nr())),
+            ("Req ID".into(), format!("{:#X}", cfg.req_id())),
+            ("Tag".into(), format!("{:#X}", cfg.tag())),
+            ("Bus".into(), format!("{:#X}", cfg.bus_nr())),
+            ("Device".into(), format!("{:#X}", cfg.dev_nr())),
+            ("Function".into(), format!("{:#X}", cfg.func_nr())),
             ("Ext Reg Nr".into(), format!("{:#X}", cfg.ext_reg_nr())),
-            ("Reg Nr".into(),     format!("{:#X}", cfg.reg_nr())),
+            ("Reg Nr".into(), format!("{:#X}", cfg.reg_nr())),
         ]
     }
 
     fn collect_cmpl(tlp: &TlpPacket) -> Vec<(String, String)> {
-        let tlpf = tlp.get_tlp_format();
+        let tlpf = match tlp.tlp_format() {
+            Ok(f) => f,
+            Err(e) => {
+                return vec![(
+                    "Error".into(),
+                    format!("Cannot determine TLP format: {:?}", e),
+                )];
+            }
+        };
         if tlpf == TlpFmt::NoDataHeader4DW || tlpf == TlpFmt::WithDataHeader4DW {
             return vec![("Error".into(), "Completions are always 3DW".into())];
         }
-        let cpl = new_cmpl_req(tlp.get_data(), &tlpf);
+        let cpl = match new_cmpl_req(tlp.data().to_vec()) {
+            Ok(c) => c,
+            Err(e) => return vec![("Error".into(), format!("Cannot parse completion: {:?}", e))],
+        };
         vec![
-            ("Compl ID".into(),                    format!("{:#X}", cpl.cmpl_id())),
-            ("Compl Status".into(),                format!("{:#X}", cpl.cmpl_stat())),
-            ("Byte Count Modified (PCI-X)".into(), format!("{:#X}", cpl.bcm())),
-            ("Byte Count".into(),                  format!("{:#X}", cpl.byte_cnt())),
-            ("Req ID".into(),                      format!("{:#X}", cpl.req_id())),
-            ("Tag".into(),                         format!("{:#X}", cpl.tag())),
-            ("Lower Address".into(),               format!("{:#X}", cpl.laddr())),
+            ("Compl ID".into(), format!("{:#X}", cpl.cmpl_id())),
+            ("Compl Status".into(), format!("{:#X}", cpl.cmpl_stat())),
+            (
+                "Byte Count Modified (PCI-X)".into(),
+                format!("{:#X}", cpl.bcm()),
+            ),
+            ("Byte Count".into(), format!("{:#X}", cpl.byte_cnt())),
+            ("Req ID".into(), format!("{:#X}", cpl.req_id())),
+            ("Tag".into(), format!("{:#X}", cpl.tag())),
+            ("Lower Address".into(), format!("{:#X}", cpl.laddr())),
         ]
     }
 
     fn collect_msg(tlp: &TlpPacket) -> Vec<(String, String)> {
-        let tlpf = tlp.get_tlp_format();
-        let msg = new_msg_req(tlp.get_data(), &tlpf);
+        let msg = match new_msg_req(tlp.data().to_vec()) {
+            Ok(m) => m,
+            Err(e) => {
+                return vec![(
+                    "Error".into(),
+                    format!("Cannot parse message request: {:?}", e),
+                )];
+            }
+        };
         vec![
-            ("Req ID".into(),       format!("{:#X}", msg.req_id())),
-            ("Tag".into(),          format!("{:#X}", msg.tag())),
+            ("Req ID".into(), format!("{:#X}", msg.req_id())),
+            ("Tag".into(), format!("{:#X}", msg.tag())),
             ("Message Code".into(), format!("{:#X}", msg.msg_code())),
-            ("Message DW3".into(),  format!("{:#X}", msg.dw3())),
-            ("Message DW4".into(),  format!("{:#X}", msg.dw4())),
+            ("Message DW3".into(), format!("{:#X}", msg.dw3())),
+            ("Message DW4".into(), format!("{:#X}", msg.dw4())),
         ]
     }
 
     fn collect_body_fields(tlp: &TlpPacket) -> Vec<(String, String)> {
-        match tlp.get_tlp_type() {
+        match tlp.tlp_type() {
             Ok(tlpt) => match tlpt {
                 TlpType::MemReadReq
                 | TlpType::MemReadLockReq
                 | TlpType::MemWriteReq
+                | TlpType::DeferrableMemWriteReq
                 | TlpType::IOReadReq
                 | TlpType::IOWriteReq
                 | TlpType::FetchAddAtomicOpReq
@@ -384,42 +499,164 @@ impl TlpTool {
 
                 TlpType::MsgReq | TlpType::MsgReqData => Self::collect_msg(tlp),
 
-                TlpType::Cpl
-                | TlpType::CplData
-                | TlpType::CplLocked
-                | TlpType::CplDataLocked => Self::collect_cmpl(tlp),
+                TlpType::Cpl | TlpType::CplData | TlpType::CplLocked | TlpType::CplDataLocked => {
+                    Self::collect_cmpl(tlp)
+                }
 
                 TlpType::LocalTlpPrefix | TlpType::EndToEndTlpPrefix => {
-                    vec![("Note".into(), "Display not implemented for TLP prefix types".into())]
+                    vec![(
+                        "Note".into(),
+                        "Display not implemented for TLP prefix types".into(),
+                    )]
                 }
             },
             Err(e) => vec![("Error".into(), format!("Cannot parse TLP type: {:?}", e))],
         }
     }
 
-    fn collect_tlp(index: usize, tlp: &TlpPacket, source: Option<String>) -> TlpData {
-        let tlp_type = match tlp.get_tlp_type() {
-            Ok(t)  => format!("{:?}", t),
+    // ── collect methods (flit mode, PCIe 6.0) ─────────────────────────────────
+
+    /// Extract flit-mode DW0 fields using `FlitDW0::from_dw0`.
+    ///
+    /// Flit-mode DW0 layout (PCIe 6.0):
+    /// ```text
+    /// byte 0: Type Code (8-bit flat code, completely different from non-flit Fmt|Type)
+    /// byte 1: OHC       (Optional Header Carrier bitmap)
+    /// byte 2: Length hi (payload length in DWs)
+    /// byte 3: Length lo
+    /// ```
+    fn collect_flit_header_fields(
+        data: &[u8],
+    ) -> Vec<(&'static str, &'static str, &'static str, String)> {
+        match FlitDW0::from_dw0(data) {
+            Ok(dw0) => vec![
+                (
+                    "Type Code",
+                    "0",
+                    "8",
+                    format!("{:#04X}  ({})", data[0], dw0.tlp_type),
+                ),
+                ("OHC", "8", "8", format!("{:#04X}", dw0.ohc)),
+                (
+                    "OHC Count",
+                    "-",
+                    "-",
+                    format!("{} extension DW(s)", dw0.ohc_count()),
+                ),
+                // Plain numeric value — keeps the same format as non-flit Length
+                // and avoids embedding units in JSON/CSV output.
+                ("Length", "16", "10", dw0.length.to_string()),
+            ],
+            Err(e) => vec![("Error", "-", "-", format!("Cannot parse flit DW0: {:?}", e))],
+        }
+    }
+
+    /// Display the raw DW words for flit body.
+    ///
+    /// rtlp-lib 0.5.0 does not yet expose per-type flit body decoders, so we
+    /// show the raw DW words to give the user the full bit pattern for manual
+    /// inspection or cross-referencing with the PCIe 6.0 spec.
+    fn collect_flit_body_fields(data: &[u8]) -> Vec<(String, String)> {
+        data.chunks(4)
+            .enumerate()
+            .map(|(i, chunk)| {
+                let dw = chunk
+                    .iter()
+                    .enumerate()
+                    .fold(0u32, |acc, (j, &b)| acc | ((b as u32) << (8 * (3 - j))));
+                (format!("DW{}", i), format!("{:#010X}", dw))
+            })
+            .collect()
+    }
+
+    fn collect_tlp(
+        index: usize,
+        tlp: &TlpPacket,
+        source: Option<String>,
+        // Original raw bytes from the caller — needed for flit DW0 parsing because
+        // tlp.data() returns only the payload bytes AFTER DW0 in flit mode.
+        raw_bytes: &[u8],
+    ) -> TlpData {
+        // ── Flit mode (PCIe 6.0) path ──────────────────────────────────────────
+        // Note: tlp.data() for flit mode contains bytes AFTER DW0, so we use
+        // the original raw_bytes for header (DW0) and body (all DWs) display.
+        if matches!(tlp.mode(), TlpMode::Flit) {
+            let tlp_type = match tlp.flit_type() {
+                Some(ft) => format!("{}", ft),
+                None => "Unknown Flit Type".into(),
+            };
+            return TlpData {
+                index,
+                source,
+                tlp_type,
+                tlp_format: "Flit Mode (PCIe 6.0)".into(),
+                header_fields: Self::collect_flit_header_fields(raw_bytes),
+                body_fields: Self::collect_flit_body_fields(raw_bytes),
+                is_flit: true,
+            };
+        }
+
+        // ── Non-flit path (PCIe 1.0 – 5.0) ───────────────────────────────────
+        // NOTE: tlp.data() in rtlp-lib 0.5.0 returns bytes AFTER DW0 (same as
+        // flit mode). DW0 header fields must be extracted from raw_bytes[0..4].
+        // tlp.data() is only correct for body parsing (new_mem_req etc.).
+        let tlp_type = match tlp.tlp_type() {
+            Ok(t) => format!("{:?}", t),
+            Err(e) => format!("Error: {:?}", e),
+        };
+        let tlp_format = match tlp.tlp_format() {
+            Ok(f) => format!("{}", f),
             Err(e) => format!("Error: {:?}", e),
         };
         TlpData {
             index,
             source,
             tlp_type,
-            tlp_format: format!("{}", tlp.get_tlp_format()),
-            header_fields: Self::collect_header_fields(tlp.get_header()),
-            body_fields: Self::collect_body_fields(tlp),
+            tlp_format,
+            header_fields: Self::collect_header_fields(raw_bytes), // use DW0 bytes, not tlp.data()
+            body_fields: Self::collect_body_fields(tlp), // tlp.data()=bytes[4..] is correct here
+            is_flit: false,
         }
     }
 
     // ── render methods ─────────────────────────────────────────────────────────
 
+    /// Properly escape a string for embedding as a JSON string value.
+    ///
+    /// The previous implementation only escaped `"` and missed `\`, newlines,
+    /// carriage returns, tabs, and other control characters — all of which can
+    /// appear in device names from lspci or in error messages, and all of which
+    /// produce invalid JSON if left unescaped.
+    fn escape_json_str(s: &str) -> String {
+        let mut out = String::with_capacity(s.len() + 2);
+        out.push('"');
+        for c in s.chars() {
+            match c {
+                '"' => out.push_str("\\\""),
+                '\\' => out.push_str("\\\\"),
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                c if (c as u32) < 0x20 => {
+                    out.push_str(&format!("\\u{:04X}", c as u32));
+                }
+                c => out.push(c),
+            }
+        }
+        out.push('"');
+        out
+    }
+
     fn render_table(data: &TlpData) {
         let color = use_color();
 
-        // Type / source banner
+        // ── Type / source banner ───────────────────────────────────────────────
         let mut t = Table::new();
-        let type_style = if color { tlp_type_style(&data.tlp_type) } else { "" };
+        let type_style = if color {
+            tlp_type_style(&data.tlp_type)
+        } else {
+            ""
+        };
         t.add_row(Row::new(vec![
             Cell::new("TLP Type"),
             Cell::new(&data.tlp_type).style_spec(type_style),
@@ -434,13 +671,23 @@ impl TlpTool {
         }
         t.printstd();
 
-        // Common header fields
+        // ── DW0 / header fields ────────────────────────────────────────────────
         let name_style = if color { "b" } else { "" };
         let mut t = Table::new();
         t.set_format(*format::consts::FORMAT_NO_LINESEP_WITH_TITLE);
-        t.set_titles(row!["Field Name", "Offset\n(bits)", "Length\n(bits)", "Value"]);
+        t.set_titles(row![
+            "Field Name",
+            "Offset\n(bits)",
+            "Length\n(bits)",
+            "Value"
+        ]);
         for (name, offset, length, value) in &data.header_fields {
-            let val_style = if color { header_val_style(name, value) } else { "" };
+            // Value styling only applies to non-flit headers (known field semantics)
+            let val_style = if color && !data.is_flit {
+                header_val_style(name, value)
+            } else {
+                ""
+            };
             t.add_row(Row::new(vec![
                 Cell::new(name).style_spec(name_style),
                 Cell::new(offset),
@@ -450,12 +697,17 @@ impl TlpTool {
         }
         t.printstd();
 
-        // Body fields
+        // ── Body fields ────────────────────────────────────────────────────────
         let mut t = Table::new();
         t.set_format(*format::consts::FORMAT_NO_LINESEP_WITH_TITLE);
-        t.set_titles(row!["TLP:", &data.tlp_format]);
+        let body_title = if data.is_flit { "Flit TLP:" } else { "TLP:" };
+        t.set_titles(row![body_title, &data.tlp_format]);
         for (k, v) in &data.body_fields {
-            let val_style = if color { body_val_style(k, v) } else { "" };
+            let val_style = if color && !data.is_flit {
+                body_val_style(k, v)
+            } else {
+                ""
+            };
             t.add_row(Row::new(vec![
                 Cell::new(k).style_spec(name_style),
                 Cell::new(v).style_spec(val_style),
@@ -465,24 +717,45 @@ impl TlpTool {
     }
 
     fn render_json(data: &TlpData) {
+        // Use escape_json_str for every string field to correctly handle
+        // backslashes, newlines, tabs, control characters, and quotes.
         let mut parts = Vec::new();
         parts.push(format!("\"index\":{}", data.index));
         if let Some(src) = &data.source {
-            parts.push(format!("\"source\":\"{}\"", src.replace('"', "\\\"")));
+            parts.push(format!("\"source\":{}", Self::escape_json_str(src)));
         }
-        parts.push(format!("\"tlp_type\":\"{}\"", data.tlp_type));
-        parts.push(format!("\"tlp_format\":\"{}\"", data.tlp_format));
+        parts.push(format!(
+            "\"tlp_type\":{}",
+            Self::escape_json_str(&data.tlp_type)
+        ));
+        parts.push(format!(
+            "\"tlp_format\":{}",
+            Self::escape_json_str(&data.tlp_format)
+        ));
+        parts.push(format!("\"flit_mode\":{}", data.is_flit));
 
-        let hdr: Vec<String> = data.header_fields.iter()
-            .map(|(name, _, _, val)| format!("\"{}\":\"{}\"", name, val))
+        let hdr: Vec<String> = data
+            .header_fields
+            .iter()
+            .map(|(name, _, _, val)| {
+                format!(
+                    "{}:{}",
+                    Self::escape_json_str(name),
+                    Self::escape_json_str(val)
+                )
+            })
             .collect();
         parts.push(format!("\"header\":{{{}}}", hdr.join(",")));
 
-        let body: Vec<String> = data.body_fields.iter()
+        let body: Vec<String> = data
+            .body_fields
+            .iter()
             .map(|(k, v)| {
-                let ek = k.replace('"', "\\\"");
-                let ev = v.replace('"', "\\\"");
-                format!("\"{}\":\"{}\"", ek, ev)
+                format!(
+                    "{}:{}",
+                    Self::escape_json_str(k),
+                    Self::escape_json_str(v)
+                )
             })
             .collect();
         parts.push(format!("\"body\":{{{}}}", body.join(",")));
@@ -491,21 +764,35 @@ impl TlpTool {
     }
 
     fn render_csv_header() {
+        // CSV format is kept backward-compatible (no flit_mode column).
+        // Flit vs non-flit is distinguished by the tlp_format column value
+        // ("Flit Mode (PCIe 6.0)" vs "3DW no Data Header" etc.).
         println!("index,source,tlp_type,tlp_format,section,key,value");
     }
 
     fn render_csv(data: &TlpData) {
         let src = data.source.as_deref().unwrap_or("").replace(',', ";");
-        let idx  = data.index;
-        let tt   = data.tlp_type.replace(',', ";");
-        let tf   = data.tlp_format.replace(',', ";");
+        let idx = data.index;
+        let tt = data.tlp_type.replace(',', ";");
+        let tf = data.tlp_format.replace(',', ";");
         for (name, _, _, val) in &data.header_fields {
-            println!("{},{},{},{},header,{},{}", idx, src, tt, tf, name, val.replace(',', ";"));
+            println!(
+                "{},{},{},{},header,{},{}",
+                idx,
+                src,
+                tt,
+                tf,
+                name,
+                val.replace(',', ";")
+            );
         }
         for (k, v) in &data.body_fields {
             println!(
                 "{},{},{},{},body,{},{}",
-                idx, src, tt, tf,
+                idx,
+                src,
+                tt,
+                tf,
                 k.replace(',', ";"),
                 v.replace(',', ";")
             );
@@ -527,19 +814,38 @@ impl TlpTool {
         }
 
         for (i, (bytes, source)) in self.config.inputs.iter().take(limit).enumerate() {
-            let tlp = TlpPacket::new(bytes.clone());
-            if tlp.get_tlp_type().is_err() {
+            let tlp_mode = if self.config.flit {
+                TlpMode::Flit
+            } else {
+                TlpMode::NonFlit
+            };
+            let tlp = match TlpPacket::new(bytes.clone(), tlp_mode) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("error: TLP #{} cannot be parsed: {:?}", i + 1, e);
+                    had_error = true;
+                    continue;
+                }
+            };
+
+            // Track parse errors: unknown type in non-flit, unknown type in flit
+            if self.config.flit {
+                if tlp.flit_type().is_none() {
+                    had_error = true;
+                }
+            } else if tlp.tlp_type().is_err() {
                 had_error = true;
             }
-            let data = Self::collect_tlp(i + 1, &tlp, source.clone());
+
+            let data = Self::collect_tlp(i + 1, &tlp, source.clone(), bytes);
 
             if multiple {
                 println!("\n{}", format!("=== TLP #{} ===", i + 1).bold().yellow());
             }
             match self.config.output {
                 OutputFormat::Table => Self::render_table(&data),
-                OutputFormat::Json  => Self::render_json(&data),
-                OutputFormat::Csv   => Self::render_csv(&data),
+                OutputFormat::Json => Self::render_json(&data),
+                OutputFormat::Csv => Self::render_csv(&data),
             }
         }
 
@@ -570,6 +876,12 @@ fn main() {
         }
         std::io::stdout().write_all(&buf).unwrap();
         return;
+    }
+
+    // Mutually exclusive scan modes
+    if args.lspci && args.aer {
+        eprintln!("error: --lspci and --aer are mutually exclusive");
+        std::process::exit(1);
     }
 
     // Helper: read raw text lines from -i flags / -f file / stdin
@@ -603,7 +915,6 @@ fn main() {
             std::process::exit(1);
         }
         found
-
     } else if args.aer {
         // AER mode: extract TLP Header: and HeaderLog: patterns
         let lines = read_text_lines(&args.input, &args.file);
@@ -616,7 +927,6 @@ fn main() {
             std::process::exit(1);
         }
         found
-
     } else if let Some(ref path) = args.file {
         // File mode: one hex string per line
         match File::open(path) {
@@ -629,11 +939,9 @@ fn main() {
                 std::process::exit(1);
             }
         }
-
     } else if !args.input.is_empty() {
         // Direct -i flags
         args.input.into_iter().map(|s| (s, None)).collect()
-
     } else {
         // Stdin fallback — but if the user ran the tool interactively with no
         // arguments at all, print help instead of silently blocking on stdin.
@@ -656,7 +964,7 @@ fn main() {
         std::process::exit(1);
     }
 
-    match Config::new(raw_inputs, args.count, args.output) {
+    match Config::new(raw_inputs, args.count, args.output, args.flit) {
         Ok(c) => std::process::exit(TlpTool::new(c).run()),
         Err(ParseConfigError::InvalidInput(n)) => {
             eprintln!("input #{n} is not valid hex");
