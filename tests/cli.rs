@@ -563,3 +563,68 @@ fn without_flit_flag_non_flit_parsing_unchanged() {
         .stdout(pred::contains("Flit Mode (PCIe 6.0)").not())
         .stdout(pred::contains("Type Code").not());
 }
+
+// ── Header field value correctness ───────────────────────────────────────────
+//
+// These tests verify the ACTUAL VALUES of DW0 bit-fields, not just that the
+// field names are present.  This catches the class of bug where tlp.data()
+// (bytes after DW0) is accidentally used for header extraction instead of the
+// original raw bytes.
+//
+// CONF_READ = "04000001 0000220f 01070000 9eece789"
+//   DW0 = 04 00 00 01
+//   Fmt    = (0x04 >> 5) & 0x7 = 0  → "3DW no data"
+//   Type   = 0x04 & 0x1F      = 4  → ConfType0Read
+//   TC     = (0x00 >> 4) & 0x7 = 0
+//   Attr   = (0x00 >> 4) & 0x3 = 0
+//   AT     = (0x00 >> 2) & 0x3 = 0
+//   Length = ((0x00 & 0x3) << 8) | 0x01 = 1
+
+#[test]
+fn header_fields_fmt_and_type_are_correct() {
+    cmd()
+        .args(["-i", CONF_READ, "--output", "json"])
+        .assert()
+        .success()
+        // Fmt=0 (3DW no data), Type=4 (Config Type 0)
+        .stdout(pred::contains("\"Fmt\":\"0\""))
+        .stdout(pred::contains("\"Type\":\"4\""));
+}
+
+#[test]
+fn header_fields_length_is_correct() {
+    cmd()
+        .args(["-i", CONF_READ, "--output", "json"])
+        .assert()
+        .success()
+        // DW0[9:0] = 1 DW payload length
+        .stdout(pred::contains("\"Length\":\"1\""));
+}
+
+#[test]
+fn header_fields_tc_attr_at_are_zero_for_conf_read() {
+    cmd()
+        .args(["-i", CONF_READ, "--output", "json"])
+        .assert()
+        .success()
+        .stdout(pred::contains("\"TC\":\"0\""))
+        .stdout(pred::contains("\"Attr\":\"0\""))
+        .stdout(pred::contains("\"AT\":\"0\""));
+}
+
+// CPL_DATA = "4a000001 2001FF00 C281FF10 00000000"
+//   DW0 = 4a 00 00 01
+//   Fmt    = (0x4a >> 5) & 0x7 = 0b010 = 2  → "3DW with data"
+//   Type   = 0x4a & 0x1F      = 0x0a = 10  → Cpl with Data (CplData)
+//   Length = ((0x00 & 0x3) << 8) | 0x01 = 1
+
+#[test]
+fn header_fields_cpl_data_fmt_and_length() {
+    cmd()
+        .args(["-i", CPL_DATA, "--output", "json"])
+        .assert()
+        .success()
+        // Fmt=2 (3DW with data)
+        .stdout(pred::contains("\"Fmt\":\"2\""))
+        .stdout(pred::contains("\"Length\":\"1\""));
+}

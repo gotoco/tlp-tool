@@ -311,7 +311,7 @@ Example output for a flit MemRead32:
 | Field Name | Offset | Length | Value                      |
 |            | (bits) | (bits) |                            |
 +------------+--------+--------+----------------------------+
-| Type Code  | 0      | 8      | 0x03  (Memory Read 32-bit) |
+| Type Code  | 0      | 8      | 0x03  (Memory Read (32-bit)) |
 | OHC        | 8      | 8      | 0x00                       |
 | OHC Count  | -      | -      | 0 extension DW(s)          |
 | Length     | 16     | 10     | 1 DW(s)                    |

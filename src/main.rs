@@ -529,6 +529,9 @@ impl TlpTool {
         }
 
         // ── Non-flit path (PCIe 1.0 – 5.0) ───────────────────────────────────
+        // NOTE: tlp.data() in rtlp-lib 0.5.0 returns bytes AFTER DW0 (same as
+        // flit mode). DW0 header fields must be extracted from raw_bytes[0..4].
+        // tlp.data() is only correct for body parsing (new_mem_req etc.).
         let tlp_type = match tlp.tlp_type() {
             Ok(t)  => format!("{:?}", t),
             Err(e) => format!("Error: {:?}", e),
@@ -542,8 +545,8 @@ impl TlpTool {
             source,
             tlp_type,
             tlp_format,
-            header_fields: Self::collect_header_fields(tlp.data()),
-            body_fields:   Self::collect_body_fields(tlp),
+            header_fields: Self::collect_header_fields(raw_bytes),   // use DW0 bytes, not tlp.data()
+            body_fields:   Self::collect_body_fields(tlp),           // tlp.data()=bytes[4..] is correct here
             is_flit: false,
         }
     }
