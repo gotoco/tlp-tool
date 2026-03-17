@@ -4,7 +4,7 @@ use predicates::str as pred;
 
 // Two TLP hex strings used across multiple tests
 const CONF_READ: &str = "04000001 0000220f 01070000 9eece789";
-const CPL_DATA: &str  = "4a000001 2001FF00 C281FF10 00000000";
+const CPL_DATA: &str = "4a000001 2001FF00 C281FF10 00000000";
 
 #[allow(deprecated)]
 fn cmd() -> Command {
@@ -132,7 +132,12 @@ fn json_multiple_tlps_is_ndjson() {
 
     let text = String::from_utf8(output).unwrap();
     let lines: Vec<&str> = text.lines().filter(|l| !l.is_empty()).collect();
-    assert_eq!(lines.len(), 2, "expected exactly 2 JSON lines (ndjson), got:\n{}", text);
+    assert_eq!(
+        lines.len(),
+        2,
+        "expected exactly 2 JSON lines (ndjson), got:\n{}",
+        text
+    );
     for line in &lines {
         assert!(
             line.starts_with('{') && line.ends_with('}'),
@@ -251,7 +256,13 @@ fn lspci_no_nonzero_headers_exits_nonzero() {
 #[test]
 fn lspci_json_output_includes_source_field() {
     cmd()
-        .args(["--lspci", "-f", "tests/fixtures/lspci_output.txt", "--output", "json"])
+        .args([
+            "--lspci",
+            "-f",
+            "tests/fixtures/lspci_output.txt",
+            "--output",
+            "json",
+        ])
         .assert()
         .success()
         .stdout(pred::contains("\"source\":"));
@@ -270,18 +281,12 @@ fn invalid_hex_exits_nonzero_with_message() {
 
 #[test]
 fn empty_stdin_exits_nonzero() {
-    cmd()
-        .write_stdin("")
-        .assert()
-        .failure();
+    cmd().write_stdin("").assert().failure();
 }
 
 #[test]
 fn valid_tlp_exits_zero() {
-    cmd()
-        .args(["-i", CONF_READ])
-        .assert()
-        .success();
+    cmd().args(["-i", CONF_READ]).assert().success();
 }
 
 // ── 4DW address display ───────────────────────────────────────────────────────
@@ -544,11 +549,205 @@ fn flit_invalid_type_code_exits_nonzero() {
 #[test]
 fn flit_count_limits_output() {
     cmd()
-        .args(["--flit", "-i", FLIT_NOP, "-i", FLIT_MEM_READ32, "--count", "1"])
+        .args([
+            "--flit",
+            "-i",
+            FLIT_NOP,
+            "-i",
+            FLIT_MEM_READ32,
+            "--count",
+            "1",
+        ])
         .assert()
         .success()
         .stdout(pred::contains("NOP"))
         .stdout(pred::contains("Memory Read (32-bit)").not());
+}
+
+// ── All supported flit type codes (rtlp-lib 0.5.0) ──────────────────────────
+//
+// One test per type ensures full coverage of the flit type table documented in
+// the README.  Byte patterns were validated against the live binary.
+//
+// DW0 layout:  byte0=TypeCode  byte1=OHC  bytes2-3=Length(DWs)
+//
+// Types 0x42 (I/O Write) and 0x44 (Config Type 0 Write) carry a mandatory OHC
+// extension (bit 0 of OHC byte must be set); both positive and negative tests
+// are included for those types.
+
+// 0x22 — UIO Memory Read (64-bit): 4 DW base header
+const FLIT_UIO_MEM_READ64: &str = "22 00 00 01 01 00 0A FF DE AD BE EF AB CD 12 34";
+
+// 0x30 — Message routed to RC: 4 DW base header, length=0
+const FLIT_MSG_ROUTED_RC: &str = "30 00 00 00 00 00 0A 00 00 00 00 00 00 00 00 00";
+
+// 0x40 — Memory Write (32-bit): 3 DW header + 1 DW data
+const FLIT_MEM_WRITE32: &str = "40 00 00 01 01 00 0A FF AB CD 12 34 DE AD BE EF";
+
+// 0x42 — I/O Write: mandatory OHC (byte 1 = 0x01) + 3 DW header + 1 DW data + 1 OHC DW
+const FLIT_IO_WRITE: &str = "42 01 00 01 01 00 0A FF AB CD 12 34 DE AD BE EF 00 00 00 00";
+
+// 0x44 — Config Type 0 Write: mandatory OHC (byte 1 = 0x01)
+const FLIT_CFG_TYPE0_WRITE: &str =
+    "44 01 00 01 01 00 0A FF AB CD 12 34 DE AD BE EF 00 00 00 00";
+
+// 0x4C — FetchAdd AtomicOp (32-bit): 3 DW header + 1 DW operand
+const FLIT_FETCHADD32: &str = "4C 00 00 01 01 00 0A FF AB CD 12 34 DE AD BE EF";
+
+// 0x4E — CompareSwap AtomicOp (32-bit): 3 DW header + 2 DW operands
+const FLIT_COMPARESWAP32: &str =
+    "4E 00 00 02 01 00 0A FF AB CD 12 34 DE AD BE EF 00 11 22 33";
+
+// 0x5B — Deferrable Memory Write (32-bit): 3 DW header + 1 DW data
+const FLIT_DEFERRABLE_MEM_WRITE32: &str = "5B 00 00 01 01 00 0A FF AB CD 12 34 DE AD BE EF";
+
+// 0x61 — UIO Memory Write (64-bit): 4 DW header + 1 DW data
+const FLIT_UIO_MEM_WRITE64: &str =
+    "61 00 00 01 01 00 0A FF DE AD BE EF AB CD 12 34 00 11 22 33";
+
+// 0x70 — Message with Data routed to RC: 4 DW header + 1 DW data
+const FLIT_MSG_DATA_ROUTED_RC: &str =
+    "70 00 00 01 00 00 0A 00 00 00 00 00 00 00 00 00 DE AD BE EF";
+
+// 0x8D — Local TLP Prefix: 2 DW
+const FLIT_LOCAL_TLP_PREFIX: &str = "8D 00 00 00 00 00 00 00";
+
+#[test]
+fn flit_uio_mem_read64_parses_correctly() {
+    cmd()
+        .args(["--flit", "-i", FLIT_UIO_MEM_READ64])
+        .assert()
+        .success()
+        .stdout(pred::contains("UIO Memory Read (64-bit)"))
+        .stdout(pred::contains("Flit Mode (PCIe 6.0)"));
+}
+
+#[test]
+fn flit_message_routed_to_rc_parses_correctly() {
+    cmd()
+        .args(["--flit", "-i", FLIT_MSG_ROUTED_RC])
+        .assert()
+        .success()
+        .stdout(pred::contains("Message routed to RC"))
+        .stdout(pred::contains("Flit Mode (PCIe 6.0)"));
+}
+
+#[test]
+fn flit_mem_write32_parses_correctly() {
+    cmd()
+        .args(["--flit", "-i", FLIT_MEM_WRITE32])
+        .assert()
+        .success()
+        .stdout(pred::contains("Memory Write (32-bit)"))
+        .stdout(pred::contains("Flit Mode (PCIe 6.0)"));
+}
+
+#[test]
+fn flit_io_write_parses_correctly() {
+    cmd()
+        .args(["--flit", "-i", FLIT_IO_WRITE])
+        .assert()
+        .success()
+        .stdout(pred::contains("I/O Write"))
+        .stdout(pred::contains("Flit Mode (PCIe 6.0)"));
+}
+
+/// I/O Write (0x42) requires mandatory OHC — OHC byte 0x00 must be rejected.
+#[test]
+fn flit_io_write_without_mandatory_ohc_fails() {
+    cmd()
+        .args([
+            "--flit",
+            "-i",
+            "42 00 00 01 01 00 0A FF AB CD 12 34 DE AD BE EF",
+        ])
+        .assert()
+        .failure()
+        .stderr(pred::contains("cannot be parsed"));
+}
+
+#[test]
+fn flit_cfg_type0_write_parses_correctly() {
+    cmd()
+        .args(["--flit", "-i", FLIT_CFG_TYPE0_WRITE])
+        .assert()
+        .success()
+        .stdout(pred::contains("Config Type 0 Write"))
+        .stdout(pred::contains("Flit Mode (PCIe 6.0)"));
+}
+
+/// Config Type 0 Write (0x44) requires mandatory OHC — OHC byte 0x00 must be rejected.
+#[test]
+fn flit_cfg_type0_write_without_mandatory_ohc_fails() {
+    cmd()
+        .args([
+            "--flit",
+            "-i",
+            "44 00 00 01 01 00 0A FF AB CD 12 34 DE AD BE EF",
+        ])
+        .assert()
+        .failure()
+        .stderr(pred::contains("cannot be parsed"));
+}
+
+#[test]
+fn flit_fetchadd32_parses_correctly() {
+    cmd()
+        .args(["--flit", "-i", FLIT_FETCHADD32])
+        .assert()
+        .success()
+        .stdout(pred::contains("FetchAdd AtomicOp (32-bit)"))
+        .stdout(pred::contains("Flit Mode (PCIe 6.0)"));
+}
+
+#[test]
+fn flit_compareswap32_parses_correctly() {
+    cmd()
+        .args(["--flit", "-i", FLIT_COMPARESWAP32])
+        .assert()
+        .success()
+        .stdout(pred::contains("CompareSwap AtomicOp (32-bit)"))
+        .stdout(pred::contains("Flit Mode (PCIe 6.0)"));
+}
+
+#[test]
+fn flit_deferrable_mem_write32_parses_correctly() {
+    cmd()
+        .args(["--flit", "-i", FLIT_DEFERRABLE_MEM_WRITE32])
+        .assert()
+        .success()
+        .stdout(pred::contains("Deferrable Memory Write (32-bit)"))
+        .stdout(pred::contains("Flit Mode (PCIe 6.0)"));
+}
+
+#[test]
+fn flit_uio_mem_write64_parses_correctly() {
+    cmd()
+        .args(["--flit", "-i", FLIT_UIO_MEM_WRITE64])
+        .assert()
+        .success()
+        .stdout(pred::contains("UIO Memory Write (64-bit)"))
+        .stdout(pred::contains("Flit Mode (PCIe 6.0)"));
+}
+
+#[test]
+fn flit_message_with_data_routed_to_rc_parses_correctly() {
+    cmd()
+        .args(["--flit", "-i", FLIT_MSG_DATA_ROUTED_RC])
+        .assert()
+        .success()
+        .stdout(pred::contains("Message with Data routed to RC"))
+        .stdout(pred::contains("Flit Mode (PCIe 6.0)"));
+}
+
+#[test]
+fn flit_local_tlp_prefix_parses_correctly() {
+    cmd()
+        .args(["--flit", "-i", FLIT_LOCAL_TLP_PREFIX])
+        .assert()
+        .success()
+        .stdout(pred::contains("Local TLP Prefix"))
+        .stdout(pred::contains("Flit Mode (PCIe 6.0)"));
 }
 
 /// Without --flit, standard non-flit TLPs still parse correctly (backward-compat).

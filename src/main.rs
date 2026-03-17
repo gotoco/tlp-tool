@@ -5,17 +5,18 @@ use std::io::IsTerminal;
 use std::io::Write;
 use std::result::Result;
 
-use rtlp_lib::{TlpPacket, TlpType, TlpFmt, TlpMode};
 use rtlp_lib::FlitDW0;
-use rtlp_lib::{new_mem_req, new_conf_req, new_cmpl_req, new_msg_req};
+use rtlp_lib::{TlpFmt, TlpMode, TlpPacket, TlpType};
+use rtlp_lib::{new_cmpl_req, new_conf_req, new_mem_req, new_msg_req};
 
 use clap::{ArgEnum, CommandFactory, Parser};
 use clap_complete::Shell;
 use colored::Colorize;
 
-#[macro_use] extern crate prettytable;
-use prettytable::{Table, Row, Cell};
+#[macro_use]
+extern crate prettytable;
 use prettytable::format;
+use prettytable::{Cell, Row, Table};
 
 // ── Output format ─────────────────────────────────────────────────────────────
 
@@ -122,7 +123,9 @@ fn extract_pci_device(line: &str) -> Option<String> {
     if !addr.contains(':') || !addr.contains('.') {
         return None;
     }
-    let ok = addr.chars().all(|c| c.is_ascii_hexdigit() || c == ':' || c == '.');
+    let ok = addr
+        .chars()
+        .all(|c| c.is_ascii_hexdigit() || c == ':' || c == '.');
     if !ok {
         return None;
     }
@@ -147,9 +150,7 @@ fn scan_aer_lines(lines: &[String]) -> Vec<(String, Option<String>)> {
 // ── Input helpers ─────────────────────────────────────────────────────────────
 
 fn is_zero_header(hex: &str) -> bool {
-    hex.chars()
-        .filter(|c| !c.is_whitespace())
-        .all(|c| c == '0')
+    hex.chars().filter(|c| !c.is_whitespace()).all(|c| c == '0')
 }
 
 /// Parse `lspci -vvv` output: extract HeaderLog entries that are non-zero,
@@ -195,10 +196,13 @@ fn use_color() -> bool {
 
 /// prettytable style_spec string for the TLP type cell.
 fn tlp_type_style(tlp_type: &str) -> &'static str {
-    if tlp_type.starts_with("Mem") || tlp_type.starts_with("IO")
+    if tlp_type.starts_with("Mem")
+        || tlp_type.starts_with("IO")
         || tlp_type.contains("Atomic")
-        || tlp_type.contains("Memory") || tlp_type.contains("UIO")
-        || tlp_type.contains("I/O") || tlp_type.starts_with("Deferrable")
+        || tlp_type.contains("Memory")
+        || tlp_type.contains("UIO")
+        || tlp_type.contains("I/O")
+        || tlp_type.starts_with("Deferrable")
     {
         "Fb" // blue — memory / IO / atomic
     } else if tlp_type.starts_with("Conf") || tlp_type.contains("Config") {
@@ -208,7 +212,7 @@ fn tlp_type_style(tlp_type: &str) -> &'static str {
     } else if tlp_type.starts_with("Cpl") {
         "Fg" // green — completion
     } else if tlp_type == "NOP" || tlp_type.contains("Local TLP Prefix") {
-        ""  // no colour — flit NOP / prefix
+        "" // no colour — flit NOP / prefix
     } else if tlp_type.starts_with("Error") {
         "Fr" // red — parse error
     } else {
@@ -247,7 +251,11 @@ impl Config {
         // Strip optional 0x/0X prefix from each whitespace-separated token,
         // then concatenate — allows inputs like "0x04000001 0x0000220f ..."
         s.split_whitespace()
-            .map(|tok| tok.strip_prefix("0x").or_else(|| tok.strip_prefix("0X")).unwrap_or(tok))
+            .map(|tok| {
+                tok.strip_prefix("0x")
+                    .or_else(|| tok.strip_prefix("0X"))
+                    .unwrap_or(tok)
+            })
             .collect()
     }
 
@@ -285,7 +293,12 @@ impl Config {
                 Err(()) => return Err(ParseConfigError::InvalidInput(i + 1)),
             }
         }
-        Ok(Config { inputs, count, output, flit })
+        Ok(Config {
+            inputs,
+            count,
+            output,
+            flit,
+        })
     }
 }
 
@@ -322,42 +335,58 @@ impl TlpTool {
         }
         let (b0, b1, b2, b3) = (data[0], data[1], data[2], data[3]);
         vec![
-            ("Fmt",     "0",  "3",  format!("{}", (b0 >> 5) & 0x7)),
-            ("Type",    "3",  "5",  format!("{}", b0 & 0x1F)),
-            ("T9",      "8",  "1",  format!("{}", (b1 >> 7) & 0x1)),
-            ("TC",      "9",  "3",  format!("{}", (b1 >> 4) & 0x7)),
-            ("T8",      "12", "1",  format!("{}", (b1 >> 3) & 0x1)),
-            ("Attr_b2", "13", "1",  format!("{}", (b1 >> 2) & 0x1)),
-            ("LN",      "14", "1",  format!("{}", (b1 >> 1) & 0x1)),
-            ("TH",      "15", "1",  format!("{}", b1 & 0x1)),
-            ("Td",      "16", "1",  format!("{}", (b2 >> 7) & 0x1)),
-            ("Ep",      "17", "1",  format!("{}", (b2 >> 6) & 0x1)),
-            ("Attr",    "18", "2",  format!("{}", (b2 >> 4) & 0x3)),
-            ("AT",      "20", "2",  format!("{}", (b2 >> 2) & 0x3)),
-            ("Length",  "22", "10", format!("{}", (((b2 as u32) & 0x3) << 8) | b3 as u32)),
+            ("Fmt", "0", "3", format!("{}", (b0 >> 5) & 0x7)),
+            ("Type", "3", "5", format!("{}", b0 & 0x1F)),
+            ("T9", "8", "1", format!("{}", (b1 >> 7) & 0x1)),
+            ("TC", "9", "3", format!("{}", (b1 >> 4) & 0x7)),
+            ("T8", "12", "1", format!("{}", (b1 >> 3) & 0x1)),
+            ("Attr_b2", "13", "1", format!("{}", (b1 >> 2) & 0x1)),
+            ("LN", "14", "1", format!("{}", (b1 >> 1) & 0x1)),
+            ("TH", "15", "1", format!("{}", b1 & 0x1)),
+            ("Td", "16", "1", format!("{}", (b2 >> 7) & 0x1)),
+            ("Ep", "17", "1", format!("{}", (b2 >> 6) & 0x1)),
+            ("Attr", "18", "2", format!("{}", (b2 >> 4) & 0x3)),
+            ("AT", "20", "2", format!("{}", (b2 >> 2) & 0x3)),
+            (
+                "Length",
+                "22",
+                "10",
+                format!("{}", (((b2 as u32) & 0x3) << 8) | b3 as u32),
+            ),
         ]
     }
 
     fn collect_mem_req(tlp: &TlpPacket) -> Vec<(String, String)> {
         let tlpf = match tlp.tlp_format() {
-            Ok(f)  => f,
-            Err(e) => return vec![("Error".into(), format!("Cannot determine TLP format: {:?}", e))],
+            Ok(f) => f,
+            Err(e) => {
+                return vec![(
+                    "Error".into(),
+                    format!("Cannot determine TLP format: {:?}", e),
+                )];
+            }
         };
         let mr = match new_mem_req(tlp.data().to_vec(), &tlpf) {
-            Ok(r)  => r,
+            Ok(r) => r,
             Err(e) => return vec![("Error".into(), format!("Cannot parse mem request: {:?}", e))],
         };
         let is_4dw = matches!(tlpf, TlpFmt::NoDataHeader4DW | TlpFmt::WithDataHeader4DW);
         let addr = mr.address();
         let mut fields = vec![
-            ("Req ID".into(),      format!("{:#X}", mr.req_id())),
-            ("Tag".into(),         format!("{:#X}", mr.tag())),
-            ("Last DW BE".into(),  format!("{:#X}", mr.ldwbe())),
+            ("Req ID".into(), format!("{:#X}", mr.req_id())),
+            ("Tag".into(), format!("{:#X}", mr.tag())),
+            ("Last DW BE".into(), format!("{:#X}", mr.ldwbe())),
             ("First DW BE".into(), format!("{:#X}", mr.fdwbe())),
         ];
         if is_4dw {
-            fields.push(("Addr High (DW2)".into(), format!("{:#010X}", (addr >> 32) as u32)));
-            fields.push(("Addr Low  (DW3)".into(), format!("{:#010X}", (addr & 0xFFFF_FFFF) as u32)));
+            fields.push((
+                "Addr High (DW2)".into(),
+                format!("{:#010X}", (addr >> 32) as u32),
+            ));
+            fields.push((
+                "Addr Low  (DW3)".into(),
+                format!("{:#010X}", (addr & 0xFFFF_FFFF) as u32),
+            ));
         } else {
             fields.push(("Address (32b)".into(), format!("{:#010X}", addr as u32)));
         }
@@ -366,61 +395,87 @@ impl TlpTool {
 
     fn collect_cfg_req(tlp: &TlpPacket) -> Vec<(String, String)> {
         let tlpf = match tlp.tlp_format() {
-            Ok(f)  => f,
-            Err(e) => return vec![("Error".into(), format!("Cannot determine TLP format: {:?}", e))],
+            Ok(f) => f,
+            Err(e) => {
+                return vec![(
+                    "Error".into(),
+                    format!("Cannot determine TLP format: {:?}", e),
+                )];
+            }
         };
         if tlpf == TlpFmt::NoDataHeader4DW || tlpf == TlpFmt::WithDataHeader4DW {
-            return vec![("Error".into(), "Configuration Requests are always 3DW".into())];
+            return vec![(
+                "Error".into(),
+                "Configuration Requests are always 3DW".into(),
+            )];
         }
         let cfg = match new_conf_req(tlp.data().to_vec()) {
-            Ok(c)  => c,
-            Err(e) => return vec![("Error".into(), format!("Cannot parse config request: {:?}", e))],
+            Ok(c) => c,
+            Err(e) => {
+                return vec![(
+                    "Error".into(),
+                    format!("Cannot parse config request: {:?}", e),
+                )];
+            }
         };
         vec![
-            ("Req ID".into(),     format!("{:#X}", cfg.req_id())),
-            ("Tag".into(),        format!("{:#X}", cfg.tag())),
-            ("Bus".into(),        format!("{:#X}", cfg.bus_nr())),
-            ("Device".into(),     format!("{:#X}", cfg.dev_nr())),
-            ("Function".into(),   format!("{:#X}", cfg.func_nr())),
+            ("Req ID".into(), format!("{:#X}", cfg.req_id())),
+            ("Tag".into(), format!("{:#X}", cfg.tag())),
+            ("Bus".into(), format!("{:#X}", cfg.bus_nr())),
+            ("Device".into(), format!("{:#X}", cfg.dev_nr())),
+            ("Function".into(), format!("{:#X}", cfg.func_nr())),
             ("Ext Reg Nr".into(), format!("{:#X}", cfg.ext_reg_nr())),
-            ("Reg Nr".into(),     format!("{:#X}", cfg.reg_nr())),
+            ("Reg Nr".into(), format!("{:#X}", cfg.reg_nr())),
         ]
     }
 
     fn collect_cmpl(tlp: &TlpPacket) -> Vec<(String, String)> {
         let tlpf = match tlp.tlp_format() {
-            Ok(f)  => f,
-            Err(e) => return vec![("Error".into(), format!("Cannot determine TLP format: {:?}", e))],
+            Ok(f) => f,
+            Err(e) => {
+                return vec![(
+                    "Error".into(),
+                    format!("Cannot determine TLP format: {:?}", e),
+                )];
+            }
         };
         if tlpf == TlpFmt::NoDataHeader4DW || tlpf == TlpFmt::WithDataHeader4DW {
             return vec![("Error".into(), "Completions are always 3DW".into())];
         }
         let cpl = match new_cmpl_req(tlp.data().to_vec()) {
-            Ok(c)  => c,
+            Ok(c) => c,
             Err(e) => return vec![("Error".into(), format!("Cannot parse completion: {:?}", e))],
         };
         vec![
-            ("Compl ID".into(),                    format!("{:#X}", cpl.cmpl_id())),
-            ("Compl Status".into(),                format!("{:#X}", cpl.cmpl_stat())),
-            ("Byte Count Modified (PCI-X)".into(), format!("{:#X}", cpl.bcm())),
-            ("Byte Count".into(),                  format!("{:#X}", cpl.byte_cnt())),
-            ("Req ID".into(),                      format!("{:#X}", cpl.req_id())),
-            ("Tag".into(),                         format!("{:#X}", cpl.tag())),
-            ("Lower Address".into(),               format!("{:#X}", cpl.laddr())),
+            ("Compl ID".into(), format!("{:#X}", cpl.cmpl_id())),
+            ("Compl Status".into(), format!("{:#X}", cpl.cmpl_stat())),
+            (
+                "Byte Count Modified (PCI-X)".into(),
+                format!("{:#X}", cpl.bcm()),
+            ),
+            ("Byte Count".into(), format!("{:#X}", cpl.byte_cnt())),
+            ("Req ID".into(), format!("{:#X}", cpl.req_id())),
+            ("Tag".into(), format!("{:#X}", cpl.tag())),
+            ("Lower Address".into(), format!("{:#X}", cpl.laddr())),
         ]
     }
 
     fn collect_msg(tlp: &TlpPacket) -> Vec<(String, String)> {
         let msg = match new_msg_req(tlp.data().to_vec()) {
-            Ok(m)  => m,
-            Err(e) => return vec![("Error".into(), format!("Cannot parse message request: {:?}", e))],
+            Ok(m) => m,
+            Err(e) => {
+                return vec![(
+                    "Error".into(),
+                    format!("Cannot parse message request: {:?}", e),
+                )];
+            }
         };
         vec![
-            ("Req ID".into(),       format!("{:#X}", msg.req_id())),
-            ("Tag".into(),          format!("{:#X}", msg.tag())),
+            ("Req ID".into(), format!("{:#X}", msg.req_id())),
+            ("Tag".into(), format!("{:#X}", msg.tag())),
             ("Message Code".into(), format!("{:#X}", msg.msg_code())),
-            ("Message DW3".into(),  format!("{:#X}", msg.dw3())),
-            ("Message DW4".into(),  format!("{:#X}", msg.dw4())),
+            ("Message DW3".into(), format!("{:#X}", msg.dw3())),
+            ("Message DW4".into(), format!("{:#X}", msg.dw4())),
         ]
     }
 
@@ -444,13 +499,15 @@ impl TlpTool {
 
                 TlpType::MsgReq | TlpType::MsgReqData => Self::collect_msg(tlp),
 
-                TlpType::Cpl
-                | TlpType::CplData
-                | TlpType::CplLocked
-                | TlpType::CplDataLocked => Self::collect_cmpl(tlp),
+                TlpType::Cpl | TlpType::CplData | TlpType::CplLocked | TlpType::CplDataLocked => {
+                    Self::collect_cmpl(tlp)
+                }
 
                 TlpType::LocalTlpPrefix | TlpType::EndToEndTlpPrefix => {
-                    vec![("Note".into(), "Display not implemented for TLP prefix types".into())]
+                    vec![(
+                        "Note".into(),
+                        "Display not implemented for TLP prefix types".into(),
+                    )]
                 }
             },
             Err(e) => vec![("Error".into(), format!("Cannot parse TLP type: {:?}", e))],
@@ -473,14 +530,22 @@ impl TlpTool {
     ) -> Vec<(&'static str, &'static str, &'static str, String)> {
         match FlitDW0::from_dw0(data) {
             Ok(dw0) => vec![
-                ("Type Code", "0",  "8",  format!("{:#04X}  ({})", data[0], dw0.tlp_type)),
-                ("OHC",       "8",  "8",  format!("{:#04X}", dw0.ohc)),
-                ("OHC Count", "-",  "-",  format!("{} extension DW(s)", dw0.ohc_count())),
-                ("Length",    "16", "10", format!("{} DW(s)", dw0.length)),
+                (
+                    "Type Code",
+                    "0",
+                    "8",
+                    format!("{:#04X}  ({})", data[0], dw0.tlp_type),
+                ),
+                ("OHC", "8", "8", format!("{:#04X}", dw0.ohc)),
+                (
+                    "OHC Count",
+                    "-",
+                    "-",
+                    format!("{} extension DW(s)", dw0.ohc_count()),
+                ),
+                ("Length", "16", "10", format!("{} DW(s)", dw0.length)),
             ],
-            Err(e) => vec![
-                ("Error", "-", "-", format!("Cannot parse flit DW0: {:?}", e)),
-            ],
+            Err(e) => vec![("Error", "-", "-", format!("Cannot parse flit DW0: {:?}", e))],
         }
     }
 
@@ -493,9 +558,10 @@ impl TlpTool {
         data.chunks(4)
             .enumerate()
             .map(|(i, chunk)| {
-                let dw = chunk.iter().enumerate().fold(0u32, |acc, (j, &b)| {
-                    acc | ((b as u32) << (8 * (3 - j)))
-                });
+                let dw = chunk
+                    .iter()
+                    .enumerate()
+                    .fold(0u32, |acc, (j, &b)| acc | ((b as u32) << (8 * (3 - j))));
                 (format!("DW{}", i), format!("{:#010X}", dw))
             })
             .collect()
@@ -515,7 +581,7 @@ impl TlpTool {
         if matches!(tlp.mode(), TlpMode::Flit) {
             let tlp_type = match tlp.flit_type() {
                 Some(ft) => format!("{}", ft),
-                None     => "Unknown Flit Type".into(),
+                None => "Unknown Flit Type".into(),
             };
             return TlpData {
                 index,
@@ -523,7 +589,7 @@ impl TlpTool {
                 tlp_type,
                 tlp_format: "Flit Mode (PCIe 6.0)".into(),
                 header_fields: Self::collect_flit_header_fields(raw_bytes),
-                body_fields:   Self::collect_flit_body_fields(raw_bytes),
+                body_fields: Self::collect_flit_body_fields(raw_bytes),
                 is_flit: true,
             };
         }
@@ -533,11 +599,11 @@ impl TlpTool {
         // flit mode). DW0 header fields must be extracted from raw_bytes[0..4].
         // tlp.data() is only correct for body parsing (new_mem_req etc.).
         let tlp_type = match tlp.tlp_type() {
-            Ok(t)  => format!("{:?}", t),
+            Ok(t) => format!("{:?}", t),
             Err(e) => format!("Error: {:?}", e),
         };
         let tlp_format = match tlp.tlp_format() {
-            Ok(f)  => format!("{}", f),
+            Ok(f) => format!("{}", f),
             Err(e) => format!("Error: {:?}", e),
         };
         TlpData {
@@ -545,8 +611,8 @@ impl TlpTool {
             source,
             tlp_type,
             tlp_format,
-            header_fields: Self::collect_header_fields(raw_bytes),   // use DW0 bytes, not tlp.data()
-            body_fields:   Self::collect_body_fields(tlp),           // tlp.data()=bytes[4..] is correct here
+            header_fields: Self::collect_header_fields(raw_bytes), // use DW0 bytes, not tlp.data()
+            body_fields: Self::collect_body_fields(tlp), // tlp.data()=bytes[4..] is correct here
             is_flit: false,
         }
     }
@@ -558,7 +624,11 @@ impl TlpTool {
 
         // ── Type / source banner ───────────────────────────────────────────────
         let mut t = Table::new();
-        let type_style = if color { tlp_type_style(&data.tlp_type) } else { "" };
+        let type_style = if color {
+            tlp_type_style(&data.tlp_type)
+        } else {
+            ""
+        };
         t.add_row(Row::new(vec![
             Cell::new("TLP Type"),
             Cell::new(&data.tlp_type).style_spec(type_style),
@@ -577,10 +647,19 @@ impl TlpTool {
         let name_style = if color { "b" } else { "" };
         let mut t = Table::new();
         t.set_format(*format::consts::FORMAT_NO_LINESEP_WITH_TITLE);
-        t.set_titles(row!["Field Name", "Offset\n(bits)", "Length\n(bits)", "Value"]);
+        t.set_titles(row![
+            "Field Name",
+            "Offset\n(bits)",
+            "Length\n(bits)",
+            "Value"
+        ]);
         for (name, offset, length, value) in &data.header_fields {
             // Value styling only applies to non-flit headers (known field semantics)
-            let val_style = if color && !data.is_flit { header_val_style(name, value) } else { "" };
+            let val_style = if color && !data.is_flit {
+                header_val_style(name, value)
+            } else {
+                ""
+            };
             t.add_row(Row::new(vec![
                 Cell::new(name).style_spec(name_style),
                 Cell::new(offset),
@@ -596,7 +675,11 @@ impl TlpTool {
         let body_title = if data.is_flit { "Flit TLP:" } else { "TLP:" };
         t.set_titles(row![body_title, &data.tlp_format]);
         for (k, v) in &data.body_fields {
-            let val_style = if color && !data.is_flit { body_val_style(k, v) } else { "" };
+            let val_style = if color && !data.is_flit {
+                body_val_style(k, v)
+            } else {
+                ""
+            };
             t.add_row(Row::new(vec![
                 Cell::new(k).style_spec(name_style),
                 Cell::new(v).style_spec(val_style),
@@ -615,12 +698,16 @@ impl TlpTool {
         parts.push(format!("\"tlp_format\":\"{}\"", data.tlp_format));
         parts.push(format!("\"flit_mode\":{}", data.is_flit));
 
-        let hdr: Vec<String> = data.header_fields.iter()
+        let hdr: Vec<String> = data
+            .header_fields
+            .iter()
             .map(|(name, _, _, val)| format!("\"{}\":\"{}\"", name, val))
             .collect();
         parts.push(format!("\"header\":{{{}}}", hdr.join(",")));
 
-        let body: Vec<String> = data.body_fields.iter()
+        let body: Vec<String> = data
+            .body_fields
+            .iter()
             .map(|(k, v)| {
                 let ek = k.replace('"', "\\\"");
                 let ev = v.replace('"', "\\\"");
@@ -641,16 +728,27 @@ impl TlpTool {
 
     fn render_csv(data: &TlpData) {
         let src = data.source.as_deref().unwrap_or("").replace(',', ";");
-        let idx  = data.index;
-        let tt   = data.tlp_type.replace(',', ";");
-        let tf   = data.tlp_format.replace(',', ";");
+        let idx = data.index;
+        let tt = data.tlp_type.replace(',', ";");
+        let tf = data.tlp_format.replace(',', ";");
         for (name, _, _, val) in &data.header_fields {
-            println!("{},{},{},{},header,{},{}", idx, src, tt, tf, name, val.replace(',', ";"));
+            println!(
+                "{},{},{},{},header,{},{}",
+                idx,
+                src,
+                tt,
+                tf,
+                name,
+                val.replace(',', ";")
+            );
         }
         for (k, v) in &data.body_fields {
             println!(
                 "{},{},{},{},body,{},{}",
-                idx, src, tt, tf,
+                idx,
+                src,
+                tt,
+                tf,
                 k.replace(',', ";"),
                 v.replace(',', ";")
             );
@@ -672,7 +770,11 @@ impl TlpTool {
         }
 
         for (i, (bytes, source)) in self.config.inputs.iter().take(limit).enumerate() {
-            let tlp_mode = if self.config.flit { TlpMode::Flit } else { TlpMode::NonFlit };
+            let tlp_mode = if self.config.flit {
+                TlpMode::Flit
+            } else {
+                TlpMode::NonFlit
+            };
             let tlp = match TlpPacket::new(bytes.clone(), tlp_mode) {
                 Ok(p) => p,
                 Err(e) => {
@@ -698,8 +800,8 @@ impl TlpTool {
             }
             match self.config.output {
                 OutputFormat::Table => Self::render_table(&data),
-                OutputFormat::Json  => Self::render_json(&data),
-                OutputFormat::Csv   => Self::render_csv(&data),
+                OutputFormat::Json => Self::render_json(&data),
+                OutputFormat::Csv => Self::render_csv(&data),
             }
         }
 
@@ -769,7 +871,6 @@ fn main() {
             std::process::exit(1);
         }
         found
-
     } else if args.aer {
         // AER mode: extract TLP Header: and HeaderLog: patterns
         let lines = read_text_lines(&args.input, &args.file);
@@ -782,7 +883,6 @@ fn main() {
             std::process::exit(1);
         }
         found
-
     } else if let Some(ref path) = args.file {
         // File mode: one hex string per line
         match File::open(path) {
@@ -795,11 +895,9 @@ fn main() {
                 std::process::exit(1);
             }
         }
-
     } else if !args.input.is_empty() {
         // Direct -i flags
         args.input.into_iter().map(|s| (s, None)).collect()
-
     } else {
         // Stdin fallback — but if the user ran the tool interactively with no
         // arguments at all, print help instead of silently blocking on stdin.
