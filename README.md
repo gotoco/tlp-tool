@@ -478,7 +478,8 @@ rtlp-tool --completions elvish > ~/.config/elvish/lib/rtlp-tool.elv
 
 All release artifacts are built automatically by GitHub Actions and attached
 to every [GitHub Release](https://github.com/mmpg-x86/tlp-tool/releases).
-Replace `<VERSION>` with the tag you want, e.g. `v0.5.0`.
+Replace `<VERSION>` with the version number (without the `v` prefix),
+e.g. `0.5.0`.
 
 ### Debian / Ubuntu (.deb)
 
