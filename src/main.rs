@@ -543,7 +543,9 @@ impl TlpTool {
                     "-",
                     format!("{} extension DW(s)", dw0.ohc_count()),
                 ),
-                ("Length", "16", "10", format!("{} DW(s)", dw0.length)),
+                // Plain numeric value — keeps the same format as non-flit Length
+                // and avoids embedding units in JSON/CSV output.
+                ("Length", "16", "10", dw0.length.to_string()),
             ],
             Err(e) => vec![("Error", "-", "-", format!("Cannot parse flit DW0: {:?}", e))],
         }
@@ -619,6 +621,32 @@ impl TlpTool {
 
     // ── render methods ─────────────────────────────────────────────────────────
 
+    /// Properly escape a string for embedding as a JSON string value.
+    ///
+    /// The previous implementation only escaped `"` and missed `\`, newlines,
+    /// carriage returns, tabs, and other control characters — all of which can
+    /// appear in device names from lspci or in error messages, and all of which
+    /// produce invalid JSON if left unescaped.
+    fn escape_json_str(s: &str) -> String {
+        let mut out = String::with_capacity(s.len() + 2);
+        out.push('"');
+        for c in s.chars() {
+            match c {
+                '"' => out.push_str("\\\""),
+                '\\' => out.push_str("\\\\"),
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                c if (c as u32) < 0x20 => {
+                    out.push_str(&format!("\\u{:04X}", c as u32));
+                }
+                c => out.push(c),
+            }
+        }
+        out.push('"');
+        out
+    }
+
     fn render_table(data: &TlpData) {
         let color = use_color();
 
@@ -689,19 +717,33 @@ impl TlpTool {
     }
 
     fn render_json(data: &TlpData) {
+        // Use escape_json_str for every string field to correctly handle
+        // backslashes, newlines, tabs, control characters, and quotes.
         let mut parts = Vec::new();
         parts.push(format!("\"index\":{}", data.index));
         if let Some(src) = &data.source {
-            parts.push(format!("\"source\":\"{}\"", src.replace('"', "\\\"")));
+            parts.push(format!("\"source\":{}", Self::escape_json_str(src)));
         }
-        parts.push(format!("\"tlp_type\":\"{}\"", data.tlp_type));
-        parts.push(format!("\"tlp_format\":\"{}\"", data.tlp_format));
+        parts.push(format!(
+            "\"tlp_type\":{}",
+            Self::escape_json_str(&data.tlp_type)
+        ));
+        parts.push(format!(
+            "\"tlp_format\":{}",
+            Self::escape_json_str(&data.tlp_format)
+        ));
         parts.push(format!("\"flit_mode\":{}", data.is_flit));
 
         let hdr: Vec<String> = data
             .header_fields
             .iter()
-            .map(|(name, _, _, val)| format!("\"{}\":\"{}\"", name, val))
+            .map(|(name, _, _, val)| {
+                format!(
+                    "{}:{}",
+                    Self::escape_json_str(name),
+                    Self::escape_json_str(val)
+                )
+            })
             .collect();
         parts.push(format!("\"header\":{{{}}}", hdr.join(",")));
 
@@ -709,9 +751,11 @@ impl TlpTool {
             .body_fields
             .iter()
             .map(|(k, v)| {
-                let ek = k.replace('"', "\\\"");
-                let ev = v.replace('"', "\\\"");
-                format!("\"{}\":\"{}\"", ek, ev)
+                format!(
+                    "{}:{}",
+                    Self::escape_json_str(k),
+                    Self::escape_json_str(v)
+                )
             })
             .collect();
         parts.push(format!("\"body\":{{{}}}", body.join(",")));

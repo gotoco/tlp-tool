@@ -314,7 +314,7 @@ Example output for a flit MemRead32:
 | Type Code  | 0      | 8      | 0x03  (Memory Read (32-bit)) |
 | OHC        | 8      | 8      | 0x00                       |
 | OHC Count  | -      | -      | 0 extension DW(s)          |
-| Length     | 16     | 10     | 1 DW(s)                    |
+| Length     | 16     | 10     | 1                          |
 +------------+--------+--------+----------------------------+
 +-----------+----------------------+
 | Flit TLP: | Flit Mode (PCIe 6.0) |
