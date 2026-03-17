@@ -37,9 +37,9 @@ This problematic TLP Header "04000001 0000220f 01070000 9eece789" can be easily 
 
 ```bash
 rtlp-tool -i "04000001 0000220f 01070000 9eece789"
-+----------+----------------------------+--------------------+
-| TLP Type | Type 0 Config Read Request | 3DW no Data Header |
-+----------+----------------------------+--------------------+
++----------+--------------------+--------------------+
+| TLP Type | ConfType0ReadReq   | 3DW no Data Header |
++----------+--------------------+--------------------+
 +------------+--------+--------+-------+
 | Field Name | Offset | Length | Value |
 |            | (bits) | (bits) |       |
@@ -86,9 +86,9 @@ TLP Header `04000001 00200a03 05010000 00050100` can be parsed by rtlp-tool via:
 
 ```bash
 rtlp-tool -i "04000001 00200a03 05010000 00050100"
-+----------+----------------------------+--------------------+
-| TLP Type | Type 0 Config Read Request | 3DW no Data Header |
-+----------+----------------------------+--------------------+
++----------+--------------------+--------------------+
+| TLP Type | ConfType0ReadReq   | 3DW no Data Header |
++----------+--------------------+--------------------+
 +------------+--------+--------+-------+
 | Field Name | Offset | Length | Value |
 |            | (bits) | (bits) |       |
@@ -142,8 +142,8 @@ Options:
                              of the non-flit Fmt[2:0]|Type[4:0] split, and supports
                              Optional Header Carriers (OHC). Default: non-flit.
   -c, --count <COUNT>        Process only the first N inputs (default: all)
-      --output <FORMAT>      Output format: table (default), json, csv
-      --completions <SHELL>  Print shell completion script [bash, zsh, fish, powershell]
+      --output <FORMAT>      Output format: table (default), json (ndjson), csv
+      --completions <SHELL>  Print shell completion script [bash, zsh, fish, powershell, elvish]
       --man                  Print man page in troff format and exit
   -h, --help                 Print help
   -V, --version              Print version
@@ -337,21 +337,25 @@ and pipelines continue to work unchanged.
 
 **Supported flit type codes** (rtlp-lib 0.5.0):
 
-| Code | Type |
-|------|------|
-| `0x00` | NOP |
-| `0x03` | Memory Read (32-bit) |
-| `0x22` | UIO Memory Read (64-bit) |
-| `0x30` | Message routed to RC |
-| `0x40` | Memory Write (32-bit) |
-| `0x42` | I/O Write |
-| `0x44` | Config Type 0 Write |
-| `0x4C` | FetchAdd AtomicOp (32-bit) |
-| `0x4E` | CompareSwap AtomicOp (32-bit) |
-| `0x5B` | Deferrable Memory Write (32-bit) |
-| `0x61` | UIO Memory Write (64-bit) |
-| `0x70` | Message with Data routed to RC |
-| `0x8D` | Local TLP Prefix |
+| Code | Type | Notes |
+|------|------|-------|
+| `0x00` | NOP | |
+| `0x03` | Memory Read (32-bit) | |
+| `0x22` | UIO Memory Read (64-bit) | |
+| `0x30` | Message routed to RC | |
+| `0x40` | Memory Write (32-bit) | |
+| `0x42` | I/O Write | OHC byte **must** be `0x01` (mandatory OHC) |
+| `0x44` | Config Type 0 Write | OHC byte **must** be `0x01` (mandatory OHC) |
+| `0x4C` | FetchAdd AtomicOp (32-bit) | |
+| `0x4E` | CompareSwap AtomicOp (32-bit) | |
+| `0x5B` | Deferrable Memory Write (32-bit) | |
+| `0x61` | UIO Memory Write (64-bit) | |
+| `0x70` | Message with Data routed to RC | |
+| `0x8D` | Local TLP Prefix | |
+
+> **Note:** Types marked "mandatory OHC" require byte 1 of DW0 to have bit 0 set (`OHC=0x01`).
+> rtlp-lib validates this and returns a `MissingMandatoryOhc` error if the bit is absent.
+> Example: `rtlp-tool --flit -i "42 01 00 01 01 00 0A FF AB CD 12 34 DE AD BE EF 00 00 00 00"`
 
 ### Output format
 
@@ -465,6 +469,9 @@ rtlp-tool --completions fish > ~/.config/fish/completions/rtlp-tool.fish
 
 # powershell
 rtlp-tool --completions powershell >> $PROFILE
+
+# elvish
+rtlp-tool --completions elvish > ~/.config/elvish/lib/rtlp-tool.elv
 ```
 
 ## Installation
