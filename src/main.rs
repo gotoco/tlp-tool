@@ -501,8 +501,17 @@ impl TlpTool {
             .collect()
     }
 
-    fn collect_tlp(index: usize, tlp: &TlpPacket, source: Option<String>) -> TlpData {
+    fn collect_tlp(
+        index: usize,
+        tlp: &TlpPacket,
+        source: Option<String>,
+        // Original raw bytes from the caller — needed for flit DW0 parsing because
+        // tlp.data() returns only the payload bytes AFTER DW0 in flit mode.
+        raw_bytes: &[u8],
+    ) -> TlpData {
         // ── Flit mode (PCIe 6.0) path ──────────────────────────────────────────
+        // Note: tlp.data() for flit mode contains bytes AFTER DW0, so we use
+        // the original raw_bytes for header (DW0) and body (all DWs) display.
         if matches!(tlp.mode(), TlpMode::Flit) {
             let tlp_type = match tlp.flit_type() {
                 Some(ft) => format!("{}", ft),
@@ -513,8 +522,8 @@ impl TlpTool {
                 source,
                 tlp_type,
                 tlp_format: "Flit Mode (PCIe 6.0)".into(),
-                header_fields: Self::collect_flit_header_fields(tlp.data()),
-                body_fields:   Self::collect_flit_body_fields(tlp.data()),
+                header_fields: Self::collect_flit_header_fields(raw_bytes),
+                body_fields:   Self::collect_flit_body_fields(raw_bytes),
                 is_flit: true,
             };
         }
@@ -679,7 +688,7 @@ impl TlpTool {
                 had_error = true;
             }
 
-            let data = Self::collect_tlp(i + 1, &tlp, source.clone());
+            let data = Self::collect_tlp(i + 1, &tlp, source.clone(), bytes);
 
             if multiple {
                 println!("\n{}", format!("=== TLP #{} ===", i + 1).bold().yellow());

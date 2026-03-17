@@ -399,3 +399,167 @@ fn count_zero_produces_no_tlp_output() {
         .stdout(pred::contains("ConfType0ReadReq").not())
         .stdout(pred::contains("CplData").not());
 }
+
+// ── Flit mode (PCIe 6.0) ──────────────────────────────────────────────────────
+//
+// Flit-mode DW0 byte 0 is a flat 8-bit type code (completely different from the
+// non-flit Fmt[2:0] | Type[4:0] split).
+//
+//   0x00 = NOP            — 1 DW base header, no payload
+//   0x03 = MemRead32      — 3 DW base header, no data payload
+//   0x40 = MemWrite32     — 3 DW base header + data payload
+//
+// These byte patterns are taken directly from the rtlp-lib 0.5.0 FlitTlpType
+// TryFrom<u8> table and the PCIe 6.0 spec.
+
+// NOP flit:  type=0x00, OHC=0x00, length=0x0000  (1 DW = 4 bytes)
+const FLIT_NOP: &str = "00 00 00 00";
+
+// MemRead32 flit: type=0x03, OHC=0x00, length=1 DW, then DW1+DW2 (3 DWs = 12 bytes)
+const FLIT_MEM_READ32: &str = "03 00 00 01 01 00 0A FF AB CD 12 34";
+
+#[test]
+fn flit_nop_parses_correctly() {
+    cmd()
+        .args(["--flit", "-i", FLIT_NOP])
+        .assert()
+        .success()
+        .stdout(pred::contains("NOP"))
+        .stdout(pred::contains("Flit Mode (PCIe 6.0)"));
+}
+
+#[test]
+fn flit_shows_flit_header_fields() {
+    cmd()
+        .args(["--flit", "-i", FLIT_NOP])
+        .assert()
+        .success()
+        // DW0 field names specific to flit mode
+        .stdout(pred::contains("Type Code"))
+        .stdout(pred::contains("OHC"))
+        .stdout(pred::contains("Length"));
+}
+
+#[test]
+fn flit_mem_read32_shows_correct_type() {
+    cmd()
+        .args(["--flit", "-i", FLIT_MEM_READ32])
+        .assert()
+        .success()
+        .stdout(pred::contains("Memory Read (32-bit)"))
+        .stdout(pred::contains("Flit Mode (PCIe 6.0)"));
+}
+
+#[test]
+fn flit_shows_raw_dw_body() {
+    cmd()
+        .args(["--flit", "-i", FLIT_MEM_READ32])
+        .assert()
+        .success()
+        // Body shows raw DW words (DW0 = first 4 bytes of packet)
+        .stdout(pred::contains("DW0"))
+        .stdout(pred::contains("DW1"))
+        .stdout(pred::contains("DW2"));
+}
+
+#[test]
+fn flit_json_output_has_flit_mode_true() {
+    cmd()
+        .args(["--flit", "-i", FLIT_NOP, "--output", "json"])
+        .assert()
+        .success()
+        .stdout(pred::contains("\"flit_mode\":true"))
+        .stdout(pred::contains("\"tlp_type\":\"NOP\""))
+        .stdout(pred::contains("\"tlp_format\":\"Flit Mode (PCIe 6.0)\""));
+}
+
+#[test]
+fn non_flit_json_has_flit_mode_false() {
+    cmd()
+        .args(["-i", CONF_READ, "--output", "json"])
+        .assert()
+        .success()
+        .stdout(pred::contains("\"flit_mode\":false"));
+}
+
+#[test]
+fn flit_csv_output_shows_flit_format_and_fields() {
+    cmd()
+        .args(["--flit", "-i", FLIT_NOP, "--output", "csv"])
+        .assert()
+        .success()
+        // tlp_format column carries "Flit Mode (PCIe 6.0)" — backward-compatible header
+        .stdout(pred::starts_with(
+            "index,source,tlp_type,tlp_format,section,key,value\n",
+        ))
+        .stdout(pred::contains("Flit Mode (PCIe 6.0)"))
+        .stdout(pred::contains(",header,Type Code,"));
+}
+
+#[test]
+fn flit_multiple_tlps_shows_separators() {
+    cmd()
+        .args(["--flit", "-i", FLIT_NOP, "-i", FLIT_MEM_READ32])
+        .assert()
+        .success()
+        .stdout(pred::contains("=== TLP #1 ==="))
+        .stdout(pred::contains("=== TLP #2 ==="))
+        .stdout(pred::contains("NOP"))
+        .stdout(pred::contains("Memory Read (32-bit)"));
+}
+
+#[test]
+fn flit_file_input_two_tlps() {
+    cmd()
+        .args(["--flit", "-f", "tests/fixtures/flit_tlps.txt"])
+        .assert()
+        .success()
+        .stdout(pred::contains("=== TLP #1 ==="))
+        .stdout(pred::contains("=== TLP #2 ==="))
+        .stdout(pred::contains("NOP"))
+        .stdout(pred::contains("Memory Read (32-bit)"));
+}
+
+#[test]
+fn flit_stdin_input() {
+    cmd()
+        .args(["--flit"])
+        .write_stdin(format!("{}\n", FLIT_NOP))
+        .assert()
+        .success()
+        .stdout(pred::contains("NOP"));
+}
+
+#[test]
+fn flit_invalid_type_code_exits_nonzero() {
+    // 0xFF is not a defined FlitTlpType code in rtlp-lib 0.5.0.
+    // TlpPacket::new(..., TlpMode::Flit) should return Err → exit code 1.
+    cmd()
+        .args(["--flit", "-i", "FF 00 00 00"])
+        .assert()
+        .failure()
+        .stderr(pred::contains("cannot be parsed"));
+}
+
+#[test]
+fn flit_count_limits_output() {
+    cmd()
+        .args(["--flit", "-i", FLIT_NOP, "-i", FLIT_MEM_READ32, "--count", "1"])
+        .assert()
+        .success()
+        .stdout(pred::contains("NOP"))
+        .stdout(pred::contains("Memory Read (32-bit)").not());
+}
+
+/// Without --flit, standard non-flit TLPs still parse correctly (backward-compat).
+#[test]
+fn without_flit_flag_non_flit_parsing_unchanged() {
+    cmd()
+        .args(["-i", CONF_READ])
+        .assert()
+        .success()
+        .stdout(pred::contains("ConfType0ReadReq"))
+        // Flit-specific strings must NOT appear in non-flit output
+        .stdout(pred::contains("Flit Mode (PCIe 6.0)").not())
+        .stdout(pred::contains("Type Code").not());
+}
