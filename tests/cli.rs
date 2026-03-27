@@ -827,3 +827,172 @@ fn header_fields_cpl_data_fmt_and_length() {
         .stdout(pred::contains("\"Fmt\":\"2\""))
         .stdout(pred::contains("\"Length\":\"1\""));
 }
+
+// ── AER Flit auto-detection (kernel v6.15+) ─────────────────────────────────
+//
+// Kernel commit 7e077e6707b3 appends " (Flit)" to TLP Header log lines when
+// the link is in Flit Mode.  The tool should auto-detect this suffix and parse
+// the TLP in flit mode without requiring the --flit flag.
+
+#[test]
+fn aer_flit_suffix_auto_detects_flit_mode() {
+    // The fixture has one non-flit TLP and one TLP with "(Flit)" suffix.
+    // The flit TLP (MemRead32, type 0x03) should parse as flit automatically.
+    cmd()
+        .args(["--aer", "-f", "tests/fixtures/aer_output_flit.txt"])
+        .assert()
+        .success()
+        .stdout(pred::contains("Memory Read (32-bit)"))
+        .stdout(pred::contains("Flit Mode (PCIe 6.0)"));
+}
+
+#[test]
+fn aer_mixed_flit_and_nonflit() {
+    // First TLP is non-flit ConfType0ReadReq, second is flit MemRead32.
+    // Both must parse correctly in their respective modes.
+    cmd()
+        .args(["--aer", "-f", "tests/fixtures/aer_output_flit.txt"])
+        .assert()
+        .success()
+        .stdout(pred::contains("=== TLP #1 ==="))
+        .stdout(pred::contains("=== TLP #2 ==="))
+        .stdout(pred::contains("ConfType0ReadReq"))
+        .stdout(pred::contains("Memory Read (32-bit)"));
+}
+
+#[test]
+fn aer_mixed_json_shows_correct_flit_per_tlp() {
+    // JSON output must show flit_mode:false for TLP #1, flit_mode:true for TLP #2.
+    let output = cmd()
+        .args([
+            "--aer",
+            "-f",
+            "tests/fixtures/aer_output_flit.txt",
+            "--output",
+            "json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let text = String::from_utf8(output).unwrap();
+    let lines: Vec<&str> = text.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(lines.len(), 2, "expected 2 JSON lines, got:\n{}", text);
+    assert!(
+        lines[0].contains("\"flit_mode\":false"),
+        "TLP #1 should be non-flit: {}",
+        lines[0]
+    );
+    assert!(
+        lines[1].contains("\"flit_mode\":true"),
+        "TLP #2 should be flit: {}",
+        lines[1]
+    );
+}
+
+#[test]
+fn aer_flit_suffix_with_0x_prefix() {
+    // Kernel v6.14+ prefixes each dword with 0x, v6.15+ adds (Flit) suffix.
+    cmd()
+        .args(["--aer", "-f", "tests/fixtures/aer_output_flit_0x.txt"])
+        .assert()
+        .success()
+        .stdout(pred::contains("ConfType0ReadReq"))
+        .stdout(pred::contains("Memory Read (32-bit)"))
+        .stdout(pred::contains("Flit Mode (PCIe 6.0)"));
+}
+
+#[test]
+fn aer_no_flit_suffix_stays_nonflit() {
+    // Existing AER fixture has no (Flit) suffix — all TLPs must parse as non-flit.
+    cmd()
+        .args(["--aer", "-f", "tests/fixtures/aer_output.txt", "--output", "json"])
+        .assert()
+        .success()
+        .stdout(pred::contains("\"flit_mode\":false"))
+        .stdout(pred::contains("\"flit_mode\":true").not());
+}
+
+#[test]
+fn aer_flit_flag_forces_all_to_flit() {
+    // Explicit --flit with --aer on the non-flit fixture forces flit parsing.
+    // The TLPs may fail to parse as valid flit types, but the mode is forced.
+    cmd()
+        .args(["--flit", "--aer", "-f", "tests/fixtures/aer_output.txt"])
+        .assert()
+        // May exit non-zero due to parse errors, but must not panic
+        .stdout(pred::contains("Flit Mode (PCIe 6.0)").or(pred::is_empty()));
+}
+
+// ── lspci Flit auto-detection (LnkSta2) ─────────────────────────────────────
+//
+// lspci -vv output includes LnkSta2: with Flit+/Flit- per device.
+// When Flit+ is present, the HeaderLog for that device should be parsed
+// in flit mode automatically.
+
+#[test]
+fn lspci_flit_plus_auto_detects_flit_mode() {
+    cmd()
+        .args(["--lspci", "-f", "tests/fixtures/lspci_output_flit.txt"])
+        .assert()
+        .success()
+        .stdout(pred::contains("Memory Read (32-bit)"))
+        .stdout(pred::contains("Flit Mode (PCIe 6.0)"));
+}
+
+#[test]
+fn lspci_mixed_flit_devices() {
+    // First device has Flit- (non-flit), second has Flit+ (flit).
+    cmd()
+        .args(["--lspci", "-f", "tests/fixtures/lspci_output_flit.txt"])
+        .assert()
+        .success()
+        .stdout(pred::contains("=== TLP #1 ==="))
+        .stdout(pred::contains("=== TLP #2 ==="))
+        .stdout(pred::contains("ConfType0ReadReq"))
+        .stdout(pred::contains("Memory Read (32-bit)"));
+}
+
+#[test]
+fn lspci_mixed_json_shows_correct_flit_per_device() {
+    let output = cmd()
+        .args([
+            "--lspci",
+            "-f",
+            "tests/fixtures/lspci_output_flit.txt",
+            "--output",
+            "json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let text = String::from_utf8(output).unwrap();
+    let lines: Vec<&str> = text.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(lines.len(), 2, "expected 2 JSON lines, got:\n{}", text);
+    assert!(
+        lines[0].contains("\"flit_mode\":false"),
+        "Device #1 (Flit-) should be non-flit: {}",
+        lines[0]
+    );
+    assert!(
+        lines[1].contains("\"flit_mode\":true"),
+        "Device #2 (Flit+) should be flit: {}",
+        lines[1]
+    );
+}
+
+#[test]
+fn lspci_without_lnksta2_defaults_nonflit() {
+    // Existing lspci fixture has no LnkSta2 lines — all non-flit, still works.
+    cmd()
+        .args(["--lspci", "-f", "tests/fixtures/lspci_output.txt"])
+        .assert()
+        .success()
+        .stdout(pred::contains("ConfType0ReadReq"))
+        .stdout(pred::contains("Flit Mode (PCIe 6.0)").not());
+}

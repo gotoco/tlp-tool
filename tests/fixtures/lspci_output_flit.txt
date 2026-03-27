@@ -1,0 +1,13 @@
+0000:00:1d.0 PCI bridge: Intel Corporation Sunrise Point-H PCI Express Root Port (rev f1)
+	LnkSta2: Current De-emphasis Level: -3.5dB, EqualizationComplete+, EqualizationPhase1Successful+, Flit-
+	Capabilities: [200 v1] Advanced Error Reporting
+		UESta:	DLP- SDES- TLP- FCP- CmpltTO- CmpltAbrt- UnxCmplt- RxOF- MalfTLP- ECRC- UnsupReq- ACSViol-
+		AERCap: First Error Pointer: 00, ECRCGenCap- ECRCGenEn- ECRCChkCap+ ECRCChkEn-
+		HeaderLog: 04000001 0000220f 01070000 9eece789
+
+01:00.0 Non-Volatile memory controller: PCIe 6.x Flit-capable NVMe Controller (rev 01)
+	LnkSta2: Current De-emphasis Level: -3.5dB, EqualizationComplete+, EqualizationPhase1Successful+, Flit+
+	Capabilities: [200 v2] Advanced Error Reporting
+		UESta:	DLP- SDES- TLP+ FCP- CmpltTO- CmpltAbrt- UnxCmplt- RxOF- MalfTLP- ECRC- UnsupReq- ACSViol-
+		AERCap: First Error Pointer: 00, ECRCGenCap- ECRCGenEn- ECRCChkCap+ ECRCChkEn-
+		HeaderLog: 03000001 01000AFF ABCD1234 00000000

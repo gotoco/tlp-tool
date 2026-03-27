@@ -134,13 +134,16 @@ Options:
                              (matches both 'TLP Header:' and 'HeaderLog:' patterns;
                               associates TLPs with device context only when preceded
                               by lspci-style PCI address lines that start with a PCI
-                              address; typical dmesg-style AER lines will not set Source)
+                              address; typical dmesg-style AER lines will not set Source).
+                             Flit Mode is auto-detected from the '(Flit)' suffix
+                             added by kernels v6.15+ (commit 7e077e6707b3).
       --lspci                Parse lspci -vvv output: extract non-zero HeaderLog entries
-                             and annotate each TLP with the device it belongs to
-      --flit                 Parse input as PCIe 6.0 flit-mode TLPs.
-                             Flit mode uses a flat 8-bit type code in DW0[7:0] instead
-                             of the non-flit Fmt[2:0]|Type[4:0] split, and supports
-                             Optional Header Carriers (OHC). Default: non-flit.
+                             and annotate each TLP with the device it belongs to.
+                             Flit Mode is auto-detected from 'LnkSta2: ... Flit+'.
+      --flit                 Force all TLPs to be parsed as PCIe 6.0 flit-mode packets.
+                             Normally not needed with --aer or --lspci, which
+                             auto-detect Flit Mode. Use for raw hex input on a
+                             known Flit Mode link.
   -c, --count <COUNT>        Process only the first N inputs (default: all)
       --output <FORMAT>      Output format: table (default), json (ndjson), csv
       --completions <SHELL>  Print shell completion script [bash, zsh, fish, powershell, elvish]
@@ -278,20 +281,102 @@ Example output:
 ...
 ```
 
+### Flit vs Non-Flit: Which mode should I use?
+
+**The raw TLP hex bytes alone do not tell you whether a link is operating in
+Flit Mode or non-Flit Mode.** The framing is a negotiated property of the
+link — it is not visible in the TLP header itself.
+
+As a result, the same four bytes decode to completely different packet types
+depending on the framing:
+
+| DW0 (hex) | Non-Flit interpretation | Flit interpretation |
+|-----------|------------------------|---------------------|
+| `04000001` | ConfType0ReadReq | I/O Write |
+| `03000001` | ConfType0WriteReq | Memory Read (32-bit) |
+
+Passing the wrong mode flag will produce plausible-looking but incorrect
+output with no error or warning.
+
+**About Flit Mode and link speed**
+
+Flit Mode was introduced in the PCIe 6.0 specification. It is mandatory at
+64.0 GT/s and supported at all PCIe link speeds. Therefore, link speed alone
+does not determine framing: a Flit-capable PCIe 6.x link may be operating
+below 64.0 GT/s and still be in Flit Mode. Once a link trains to Flit Mode
+it remains in Flit Mode for the duration of the LinkUp state, even if the
+negotiated speed changes downward.
+
+**How to determine the negotiated framing**
+
+The authoritative source is the PCIe Capability in config space. Two standard
+fields are relevant:
+
+- **Flit Mode Supported** — in the PCIe Capability register
+- **Flit Mode Status** — in Link Status 2; reflects the negotiated state
+
+If your `lspci` (pciutils) is recent enough to decode these fields,
+`lspci -vv` will show them directly. Otherwise read config space with
+`setpci` using capability-relative access, or inspect the raw sysfs file
+at `/sys/bus/pci/devices/<BDF>/config`.
+
+On Linux, the kernel caches the negotiated Flit Mode state in
+`struct pci_bus` (from Link Status 2) and exposes it through the
+`pcie_link_event` tracepoint (`flit_mode` field). There is no generic
+`/sys/.../flit_mode` ABI file in the Linux PCI sysfs today.
+
+> **Caveat:** After a DPC trigger or link-down event, Link Status 2 may
+> no longer reflect the pre-error state. AER records whether a TLP was
+> logged in Flit Mode; DPC does not. For post-mortem diagnostics, rely on
+> the kernel-cached value rather than re-reading Link Status 2 live.
+
+**Auto-detection (recommended)**
+
+On kernels v6.15+ (commit `7e077e6707b3`), the kernel appends `(Flit)` to
+TLP Header log lines when the link is in Flit Mode. rtlp-tool auto-detects
+this suffix — no `--flit` flag needed:
+
+```bash
+# Works for both flit and non-flit TLPs, even mixed in the same log
+dmesg | rtlp-tool --aer
+```
+
+Similarly, `--lspci` auto-detects Flit Mode from `LnkSta2: ... Flit+` in
+the `lspci -vv` output:
+
+```bash
+# Auto-detects per-device flit mode from LnkSta2
+lspci -vvv | rtlp-tool --lspci
+```
+
+**Manual override**
+
+For raw hex input, or on older kernels without the `(Flit)` suffix, use
+`--flit` to force flit-mode parsing:
+
+```bash
+# Non-Flit link (default)
+rtlp-tool --aer -f aer_dump.txt
+
+# Force Flit Mode for all TLPs
+rtlp-tool --aer --flit -f aer_dump.txt
+```
+
 ### Flit Mode (PCIe 6.0)
 
 PCIe 6.0 introduced **flit-mode** TLP framing. In flit mode the DW0 encoding
-is **completely different** from PCIe 1.0–5.0:
+is **completely different** from non-flit framing:
 
-| Field | Non-flit (PCIe 1.0–5.0) | Flit (PCIe 6.0) |
-|-------|------------------------|-----------------|
+| Field | Non-Flit | Flit (PCIe 6.0) |
+|-------|----------|-----------------|
 | DW0[7:5] | Fmt (3-bit format) | — |
 | DW0[4:0] | Type (5-bit type) | — |
 | DW0[7:0] | — | **8-bit flat type code** |
 | DW0[15:8] | TC / Attr / LN / TH / … | OHC bitmap |
 | DW0[25:16] | Length (10-bit) | Payload length (DWs) |
 
-Pass `--flit` to tell rtlp-tool to use flit-mode framing:
+When using `--aer` or `--lspci`, Flit Mode is auto-detected (see above).
+For raw hex input, pass `--flit` to tell rtlp-tool to use flit-mode framing:
 
 ```bash
 # Flit NOP (type code 0x00)
@@ -332,8 +417,10 @@ rtlp-tool --flit -i "03 00 00 01 01 00 0A FF AB CD 12 34" --output json
 # → {"index":1,"tlp_type":"Memory Read (32-bit)","tlp_format":"Flit Mode (PCIe 6.0)","flit_mode":true,...}
 ```
 
-Without `--flit` the tool defaults to non-flit mode — all existing scripts
-and pipelines continue to work unchanged.
+Without `--flit` the tool defaults to non-flit mode for raw hex input —
+all existing scripts and pipelines continue to work unchanged. When using
+`--aer` or `--lspci`, Flit Mode is auto-detected per-TLP from kernel/lspci
+markers, so `--flit` is typically not needed.
 
 **Supported flit type codes** (rtlp-lib 0.5.0):
 

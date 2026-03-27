@@ -41,19 +41,20 @@ struct Args {
     #[clap(short, long, value_name = "FILE")]
     file: Option<String>,
 
-    /// Scan input for AER TLP headers (matches both 'TLP Header:' and 'HeaderLog:' patterns)
+    /// Scan input for AER TLP headers (matches both 'TLP Header:' and 'HeaderLog:' patterns).
+    /// Flit Mode is auto-detected from the '(Flit)' suffix added by kernels v6.15+.
     #[clap(long)]
     aer: bool,
 
     /// Parse lspci -vvv output: extract non-zero HeaderLog entries and annotate
-    /// each TLP with the PCIe device it belongs to
+    /// each TLP with the PCIe device it belongs to.
+    /// Flit Mode is auto-detected from 'LnkSta2: ... Flit+' in the lspci output.
     #[clap(long)]
     lspci: bool,
 
-    /// Parse input as PCIe 6.0 flit-mode TLPs.
-    /// By default the tool uses non-flit (PCIe 1.0–5.0) framing.
-    /// Flit mode uses a completely different DW0 type-code encoding
-    /// (flat 8-bit code in DW0[7:0]) and optional header extensions (OHC).
+    /// Force all TLPs to be parsed as PCIe 6.0 flit-mode packets.
+    /// Normally not needed with --aer or --lspci, which auto-detect Flit Mode.
+    /// Use this flag for raw hex input on a known Flit Mode link.
     #[clap(long)]
     flit: bool,
 
@@ -92,23 +93,29 @@ struct TlpData {
 // ── Config ────────────────────────────────────────────────────────────────────
 
 struct Config {
-    /// (raw bytes, optional source label)
-    inputs: Vec<(Vec<u8>, Option<String>)>,
+    /// (raw bytes, optional source label, per-TLP flit auto-detected)
+    inputs: Vec<(Vec<u8>, Option<String>, bool)>,
     count: Option<usize>,
     output: OutputFormat,
-    /// true → parse with TlpMode::Flit (PCIe 6.0); false → TlpMode::NonFlit
+    /// Global override: true → force all TLPs to Flit mode (from --flit flag)
     flit: bool,
 }
 
 // ── AER / lspci scanner ───────────────────────────────────────────────────────
 
-fn extract_tlp_from_line(line: &str) -> Option<String> {
+/// Extract a TLP hex string from a log line, and detect the `(Flit)` suffix
+/// appended by kernels v6.15+ (commit 7e077e6707b3).
+///
+/// Returns `(hex_string, is_flit)`.
+fn extract_tlp_from_line(line: &str) -> Option<(String, bool)> {
     for pattern in &["TLP Header:", "HeaderLog:"] {
         if let Some(pos) = line.find(pattern) {
             let rest = line[pos + pattern.len()..].trim();
+            // Detect "(Flit)" suffix on the raw rest string before splitting.
+            let is_flit = rest.trim_end().ends_with("(Flit)");
             let groups: Vec<&str> = rest.split_whitespace().take(4).collect();
             if !groups.is_empty() {
-                return Some(groups.join(" "));
+                return Some((groups.join(" "), is_flit));
             }
         }
     }
@@ -133,15 +140,15 @@ fn extract_pci_device(line: &str) -> Option<String> {
     Some(format!("{} {}", addr, label))
 }
 
-fn scan_aer_lines(lines: &[String]) -> Vec<(String, Option<String>)> {
+fn scan_aer_lines(lines: &[String]) -> Vec<(String, Option<String>, bool)> {
     let mut results = Vec::new();
     let mut current_device: Option<String> = None;
     for line in lines {
         if let Some(dev) = extract_pci_device(line) {
             current_device = Some(dev);
         }
-        if let Some(tlp_hex) = extract_tlp_from_line(line) {
-            results.push((tlp_hex, current_device.clone()));
+        if let Some((tlp_hex, is_flit)) = extract_tlp_from_line(line) {
+            results.push((tlp_hex, current_device.clone(), is_flit));
         }
     }
     results
@@ -155,12 +162,27 @@ fn is_zero_header(hex: &str) -> bool {
 
 /// Parse `lspci -vvv` output: extract HeaderLog entries that are non-zero,
 /// and tag each one with the device address + name that owns it.
-fn scan_lspci_lines(lines: &[String]) -> Vec<(String, Option<String>)> {
+///
+/// Flit Mode is auto-detected from `LnkSta2:` lines containing `Flit+`.
+/// `LnkSta2:` always appears before `HeaderLog:` in lspci output (lower
+/// register offset), so the ordering is reliable.
+///
+/// Note: `Flit+` / `Flit-` in `LnkSta2:` is only valid when the link is Up.
+/// For offline/saved logs it is the best available signal.  The literal
+/// string `Flit+` does not appear in PCI device names (sourced from the
+/// PCI ID database), so false positives are not a practical concern.
+fn scan_lspci_lines(lines: &[String]) -> Vec<(String, Option<String>, bool)> {
     let mut results = Vec::new();
     let mut current_device: Option<String> = None;
+    let mut current_flit = false;
     for line in lines {
         if let Some(dev) = extract_pci_device(line) {
             current_device = Some(dev);
+            current_flit = false; // reset on each new device
+        }
+        // Detect LnkSta2 Flit Mode status for the current device
+        if line.contains("LnkSta2:") && line.contains("Flit+") {
+            current_flit = true;
         }
         // Only match "HeaderLog:" (lspci specific), not "TLP Header:"
         if let Some(pos) = line.find("HeaderLog:") {
@@ -173,7 +195,7 @@ fn scan_lspci_lines(lines: &[String]) -> Vec<(String, Option<String>)> {
             if is_zero_header(&hex) {
                 continue; // no TLP captured for this device
             }
-            results.push((hex, current_device.clone()));
+            results.push((hex, current_device.clone(), current_flit));
         }
     }
     results
@@ -280,16 +302,16 @@ impl Config {
     }
 
     fn new(
-        raw_inputs: Vec<(String, Option<String>)>,
+        raw_inputs: Vec<(String, Option<String>, bool)>,
         count: Option<usize>,
         output: OutputFormat,
         flit: bool,
     ) -> Result<Config, ParseConfigError> {
         let mut inputs = Vec::new();
-        for (i, (raw, source)) in raw_inputs.into_iter().enumerate() {
+        for (i, (raw, source, detected_flit)) in raw_inputs.into_iter().enumerate() {
             let cleaned = Config::remove_whitespace(&raw);
             match Config::convert_to_vec(&cleaned) {
-                Ok(bytes) => inputs.push((bytes, source)),
+                Ok(bytes) => inputs.push((bytes, source, detected_flit)),
                 Err(()) => return Err(ParseConfigError::InvalidInput(i + 1)),
             }
         }
@@ -813,8 +835,9 @@ impl TlpTool {
             Self::render_csv_header();
         }
 
-        for (i, (bytes, source)) in self.config.inputs.iter().take(limit).enumerate() {
-            let tlp_mode = if self.config.flit {
+        for (i, (bytes, source, detected_flit)) in self.config.inputs.iter().take(limit).enumerate() {
+            // Per-TLP mode: --flit forces all; otherwise use auto-detected flag
+            let tlp_mode = if self.config.flit || *detected_flit {
                 TlpMode::Flit
             } else {
                 TlpMode::NonFlit
@@ -829,7 +852,7 @@ impl TlpTool {
             };
 
             // Track parse errors: unknown type in non-flit, unknown type in flit
-            if self.config.flit {
+            if matches!(tlp_mode, TlpMode::Flit) {
                 if tlp.flit_type().is_none() {
                     had_error = true;
                 }
@@ -901,8 +924,8 @@ fn main() {
         }
     };
 
-    // Collect (hex_string, source_label) pairs according to mode
-    let raw_inputs: Vec<(String, Option<String>)> = if args.lspci {
+    // Collect (hex_string, source_label, detected_flit) triples according to mode
+    let raw_inputs: Vec<(String, Option<String>, bool)> = if args.lspci {
         // lspci -vvv mode: extract non-zero HeaderLog entries with device context
         let lines = read_text_lines(&args.input, &args.file);
         let found = scan_lspci_lines(&lines);
@@ -932,7 +955,7 @@ fn main() {
         match File::open(path) {
             Ok(f) => read_lines_from(BufReader::new(f))
                 .into_iter()
-                .map(|l| (l, None))
+                .map(|l| (l, None, false))
                 .collect(),
             Err(e) => {
                 eprintln!("error: cannot open '{}': {}", path, e);
@@ -941,7 +964,7 @@ fn main() {
         }
     } else if !args.input.is_empty() {
         // Direct -i flags
-        args.input.into_iter().map(|s| (s, None)).collect()
+        args.input.into_iter().map(|s| (s, None, false)).collect()
     } else {
         // Stdin fallback — but if the user ran the tool interactively with no
         // arguments at all, print help instead of silently blocking on stdin.
@@ -953,7 +976,7 @@ fn main() {
         }
         read_lines_from(std::io::stdin().lock())
             .into_iter()
-            .map(|l| (l, None))
+            .map(|l| (l, None, false))
             .collect()
     };
 
