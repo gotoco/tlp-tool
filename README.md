@@ -643,13 +643,54 @@ Download `rtlp-tool-windows-x86_64.zip` from the
 
 ### From crates.io
 
-Requires Rust toolchain installed ([rustup.rs](https://rustup.rs)):
+If you have the Rust toolchain installed ([rustup.rs](https://rustup.rs)),
+you can install the latest published release directly from crates.io.
+This builds from source and places the binary in Cargo's bin directory
+(`~/.cargo/bin` by default), which is added to `PATH` by the Rust installer.
 
 ```bash
 cargo install rtlp_tool
 ```
 
-### Build from source
+The crate name is `rtlp_tool` (underscore, not hyphen). The installed
+binary is called `rtlp-tool`.
+
+To update to the latest version later:
+
+```bash
+cargo install rtlp_tool --force
+```
+
+### Build & install from a local checkout
+
+Clone the repository and install from the working directory. Note that
+bare `cargo install` (without arguments) inside a project directory is
+**no longer supported** — you must pass `--path .`:
+
+```bash
+git clone https://github.com/mmpg-x86/tlp-tool.git
+cd tlp-tool
+cargo install --path .
+```
+
+This compiles in release mode and copies the binary to `~/.cargo/bin/`
+(or `%USERPROFILE%\.cargo\bin\` on Windows). After installation:
+
+```bash
+rtlp-tool --version
+rtlp-tool -i "04000001 0000220f 01070000 9eece789"
+```
+
+To install to a custom location, use `--root`:
+
+```bash
+cargo install --path . --root /usr/local    # Linux / macOS / FreeBSD
+cargo install --path . --root "$HOME/tools"  # user-local alternative
+```
+
+### Build without installing
+
+If you just want to compile and run without installing system-wide:
 
 ```bash
 git clone https://github.com/mmpg-x86/tlp-tool.git
@@ -657,6 +698,18 @@ cd tlp-tool
 cargo build --release
 ./target/release/rtlp-tool -i "04000001 0000220f 01070000 9eece789"
 ```
+
+The binary is at `target/release/rtlp-tool` (Linux, macOS, FreeBSD) or
+`target\release\rtlp-tool.exe` (Windows). Copy it wherever you like.
+
+### Platform notes for building from source
+
+| Platform | Prerequisites | Notes |
+|----------|--------------|-------|
+| **Linux** | `curl --proto '=https' -sSf https://sh.rustup.rs \| sh` | Works on any distro. No C library dependency at runtime. |
+| **macOS** | `curl --proto '=https' -sSf https://sh.rustup.rs \| sh` | Works on both Apple Silicon and Intel. Xcode Command Line Tools may be required (`xcode-select --install`). |
+| **Windows** | Download `rustup-init.exe` from [rustup.rs](https://rustup.rs) | Requires the Visual Studio C++ Build Tools. The installer will prompt you. Use PowerShell or `cmd` to run cargo commands. |
+| **FreeBSD** | `pkg install rust` or use rustup | System Rust from ports works; rustup gives you the latest stable. |
 
 ## Dependencies
 
