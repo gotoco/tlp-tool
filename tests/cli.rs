@@ -996,3 +996,485 @@ fn lspci_without_lnksta2_defaults_nonflit() {
         .stdout(pred::contains("ConfType0ReadReq"))
         .stdout(pred::contains("Flit Mode (PCIe 6.0)").not());
 }
+
+// ── DWord Byte-Swap (--swap / -s) tests ─────────────────────────────────────
+//
+// CR-001 REQ-1: Reverse bytes within each 32-bit DWord for little-endian
+// CPU input before any TLP parsing.
+
+/// --swap CfgWr0 from a MIPS LE capture.
+/// Raw LE: 0x01000044 0x03210000 0x04000104 0x07000000
+/// After per-DWord swap: 44000001 00002103 04010004 00000007
+/// DW2 after swap = 0x04010004: Bus=4, Dev=0, Func=1, ExtReg=0, Reg=1 → offset 0x004
+/// Decodes as ConfType0WriteReq, Target BDF 04:00.1, Reg=Command/Status.
+#[test]
+fn swap_cfgwr0_mips_le() {
+    cmd()
+        .args(["-s", "-i", "0x01000044 0x03210000 0x04000104 0x07000000"])
+        .assert()
+        .success()
+        .stdout(pred::contains("ConfType0WriteReq"))
+        .stdout(pred::contains("Target BDF"))
+        .stdout(pred::contains("04:00.1"))
+        .stdout(pred::contains("Command / Status"))
+        .stdout(pred::contains("Register Offset"))
+        .stdout(pred::contains("0x004"));
+}
+
+/// --swap MRd64 from a MIPS LE NTB capture.
+/// Raw LE: 0x02100020 0xFF200000 0x04000000 0x00000040
+/// After swap: 20001002 000020FF 00000004 40000000
+/// Decodes as MemReadReq, 4DW, Length=2, ReqID=0x0000, Tag=0x20.
+#[test]
+fn swap_mrd64_mips_le_ntb() {
+    cmd()
+        .args([
+            "-s",
+            "-i",
+            "0x02100020 0xFF200000 0x04000000 0x00000040",
+        ])
+        .assert()
+        .success()
+        .stdout(pred::contains("MemReadReq"))
+        .stdout(pred::contains("4DW no Data Header"))
+        .stdout(pred::contains("Addr High (DW2)"))
+        .stdout(pred::contains("0x00000004"))
+        .stdout(pred::contains("Addr Low  (DW3)"))
+        .stdout(pred::contains("0x40000000"));
+}
+
+/// Without --swap, the same bytes as the swap test decode identically.
+/// Verifies that manually pre-swapped input matches --swap output.
+/// LE input: 0x01000044 0x03210000 0x04000104 0x07000000
+/// After DWord swap: 44000001 00002103 04010004 00000007
+#[test]
+fn swap_identity_preswapped_matches() {
+    let output_swapped = cmd()
+        .args(["-s", "-i", "0x01000044 0x03210000 0x04000104 0x07000000", "--output", "json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    // Manually pre-swapped: each DWord reversed
+    let output_direct = cmd()
+        .args(["-i", "44000001 00002103 04010004 00000007", "--output", "json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let swapped_text = String::from_utf8(output_swapped).unwrap();
+    let direct_text = String::from_utf8(output_direct).unwrap();
+    assert_eq!(swapped_text, direct_text, "--swap should produce identical output to pre-swapped input");
+}
+
+/// --swap with input whose byte count is not a multiple of 4 should error.
+#[test]
+fn swap_non_multiple_of_4_errors() {
+    cmd()
+        .args(["-s", "-i", "440000"])
+        .assert()
+        .failure()
+        .stderr(pred::contains("--swap requires input length to be a multiple of 4 bytes"));
+}
+
+/// --swap combined with commas (REQ-4 + REQ-1 interaction).
+#[test]
+fn swap_with_commas() {
+    cmd()
+        .args([
+            "-s",
+            "-i",
+            "0x02100020, 0xFF200000, 0x04000000, 0x00000040",
+        ])
+        .assert()
+        .success()
+        .stdout(pred::contains("MemReadReq"))
+        .stdout(pred::contains("4DW no Data Header"));
+}
+
+/// --swap with file input.
+#[test]
+fn swap_with_file_input() {
+    // Create a temp file with LE-swapped bytes
+    let dir = std::env::temp_dir();
+    let path = dir.join("rtlp_test_swap.txt");
+    std::fs::write(&path, "0x01000044 0x03210000 0x04000104 0x07000000\n").unwrap();
+
+    cmd()
+        .args(["-s", "-f", path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(pred::contains("ConfType0WriteReq"));
+
+    std::fs::remove_file(&path).ok();
+}
+
+/// --swap with stdin input.
+#[test]
+fn swap_with_stdin() {
+    cmd()
+        .args(["-s"])
+        .write_stdin("0x01000044 0x03210000 0x04000104 0x07000000\n")
+        .assert()
+        .success()
+        .stdout(pred::contains("ConfType0WriteReq"));
+}
+
+// ── Enhanced Config TLP output tests ────────────────────────────────────────
+//
+// CR-001 REQ-2: BDF notation, register offset, register name lookup,
+// byte enable display, data payload, operation summary.
+
+/// CfgRd0 basic: verify Target BDF, Register Offset, Register Name fields.
+/// CONF_READ = "04000001 0000220f 01070000 9eece789"
+/// Bus=0x01, Dev=0x00, Func=0x07, ExtReg=0, Reg=0 → offset 0x000 → Vendor ID / Device ID
+#[test]
+fn cfg_enhanced_cfgrd0_basic() {
+    cmd()
+        .args(["-i", CONF_READ])
+        .assert()
+        .success()
+        .stdout(pred::contains("Target BDF"))
+        .stdout(pred::contains("01:00.7"))
+        .stdout(pred::contains("Register Offset"))
+        .stdout(pred::contains("0x000"))
+        .stdout(pred::contains("Register Name"))
+        .stdout(pred::contains("Vendor ID / Device ID"))
+        .stdout(pred::contains("Operation"))
+        .stdout(pred::contains("Read Vendor ID / Device ID register at 01:00.7"));
+}
+
+/// CfgWr0 with data: Command register write.
+/// DW0: Fmt=2 Type=4 → 0x44, Length=1 → 44000001
+/// DW1: ReqID=0, Tag=0x21, LDWBE=0, FDWBE=0x3 → 00002103
+/// DW2: Bus=04, Dev=0, Func=2, ExtReg=0, Reg=1 → offset=0x004 → Command/Status
+/// DW3: Data=0x00000007
+#[test]
+fn cfg_enhanced_cfgwr0_with_data() {
+    cmd()
+        .args(["-i", "44000001 00002103 04020004 00000007"])
+        .assert()
+        .success()
+        .stdout(pred::contains("ConfType0WriteReq"))
+        .stdout(pred::contains("Target BDF"))
+        .stdout(pred::contains("04:00.2"))
+        .stdout(pred::contains("Register Name"))
+        .stdout(pred::contains("Command / Status"))
+        .stdout(pred::contains("Data"))
+        .stdout(pred::contains("0x00000007"))
+        .stdout(pred::contains("Operation"))
+        .stdout(pred::contains("Write 0x0007 to Command / Status register at 04:00.2"));
+}
+
+/// CfgRd1 bridge: Type 1 config read to offset 0x18 (Primary Bus Number).
+/// DW0: Fmt=0 Type=5 → 0x05, Length=1 → 05000001
+/// DW1: ReqID=0x0100, Tag=0x0A, LDWBE=0, FDWBE=0xF → 01000A0F
+/// DW2: Bus=02, Dev=0, Func=0, ExtReg=0, Reg=6 → offset=0x18
+#[test]
+fn cfg_enhanced_cfgrd1_bridge() {
+    cmd()
+        .args(["-i", "05000001 01000A0F 02000018"])
+        .assert()
+        .success()
+        .stdout(pred::contains("ConfType1ReadReq"))
+        .stdout(pred::contains("Target BDF"))
+        .stdout(pred::contains("02:00.0"))
+        .stdout(pred::contains("Register Offset"))
+        .stdout(pred::contains("0x018"))
+        .stdout(pred::contains("Register Name"))
+        .stdout(pred::contains("Primary / Secondary / Subordinate Bus"));
+}
+
+/// CfgWr1 bridge: Type 1 config write to offset 0x3C (Bridge Control).
+/// DW0: Fmt=2 Type=5 → 0x45, Length=1 → 45000001
+/// DW1: ReqID=0, Tag=0x10, LDWBE=0, FDWBE=0xC → 0000100C
+/// DW2: Bus=03, Dev=0, Func=0, ExtReg=0, Reg=15 → offset=0x3C
+/// DW3: Data=0x00400000
+#[test]
+fn cfg_enhanced_cfgwr1_bridge_control() {
+    cmd()
+        .args(["-i", "45000001 0000100C 0300003C 00400000"])
+        .assert()
+        .success()
+        .stdout(pred::contains("ConfType1WriteReq"))
+        .stdout(pred::contains("Target BDF"))
+        .stdout(pred::contains("03:00.0"))
+        .stdout(pred::contains("Register Name"))
+        .stdout(pred::contains("Bridge Control"))
+        .stdout(pred::contains("Data"))
+        .stdout(pred::contains("0x00400000"));
+}
+
+/// Capabilities region: config read at offset 0x40+.
+/// DW0: Fmt=0 Type=4 → 0x04, Length=1 → 04000001
+/// DW1: ReqID=0, Tag=0x30, LDWBE=0, FDWBE=0xF → 0000300F
+/// DW2: Bus=01, Dev=0, Func=0, ExtReg=0, Reg=16 → offset=0x40
+#[test]
+fn cfg_enhanced_capabilities_region() {
+    cmd()
+        .args(["-i", "04000001 0000300F 01000040"])
+        .assert()
+        .success()
+        .stdout(pred::contains("Register Name"))
+        .stdout(pred::contains("(capabilities region - offset 0x40)"));
+}
+
+/// Extended config space: config read at offset 0x100+.
+/// DW0: Fmt=0 Type=4 → 0x04, Length=1 → 04000001
+/// DW1: ReqID=0, Tag=0x30, LDWBE=0, FDWBE=0xF → 0000300F
+/// DW2: Bus=01, Dev=0, Func=0, ExtReg=1, Reg=0 → offset=0x100
+#[test]
+fn cfg_enhanced_extended_config_space() {
+    cmd()
+        .args(["-i", "04000001 0000300F 01000100"])
+        .assert()
+        .success()
+        .stdout(pred::contains("Register Name"))
+        .stdout(pred::contains("(extended config space - offset 0x100)"));
+}
+
+/// First DW BE decode: FDWBE=0x3 shows "(bytes 0-1)".
+#[test]
+fn cfg_enhanced_first_dw_be_decode() {
+    cmd()
+        .args(["-i", "44000001 00002103 04020004 00000007"])
+        .assert()
+        .success()
+        .stdout(pred::contains("First DW BE"))
+        .stdout(pred::contains("0x3 (bytes 0-1)"));
+}
+
+/// Last DW BE decode: LDWBE=0x0 shows "(none)".
+#[test]
+fn cfg_enhanced_last_dw_be_decode() {
+    cmd()
+        .args(["-i", "44000001 00002103 04020004 00000007"])
+        .assert()
+        .success()
+        .stdout(pred::contains("Last DW BE"))
+        .stdout(pred::contains("0x0 (none)"));
+}
+
+/// JSON output includes all new config TLP body fields.
+#[test]
+fn cfg_enhanced_json_output() {
+    cmd()
+        .args([
+            "-i",
+            "44000001 00002103 04020004 00000007",
+            "--output",
+            "json",
+        ])
+        .assert()
+        .success()
+        .stdout(pred::contains("\"Target BDF\":\"04:00.2\""))
+        .stdout(pred::contains("\"Register Offset\":\"0x004\""))
+        .stdout(pred::contains("\"Register Name\":\"Command / Status\""))
+        .stdout(pred::contains("\"Data\":\"0x00000007\""))
+        .stdout(pred::contains("\"Operation\":\"Write 0x0007 to Command / Status register at 04:00.2\""));
+}
+
+/// CSV output includes new config TLP body rows.
+#[test]
+fn cfg_enhanced_csv_output() {
+    cmd()
+        .args([
+            "-i",
+            "44000001 00002103 04020004 00000007",
+            "--output",
+            "csv",
+        ])
+        .assert()
+        .success()
+        .stdout(pred::contains(",body,Target BDF,04:00.2"))
+        .stdout(pred::contains(",body,Register Offset,0x004"))
+        .stdout(pred::contains(",body,Register Name,Command / Status"))
+        .stdout(pred::contains(",body,Data,0x00000007"))
+        .stdout(pred::contains(",body,Operation,"));
+}
+
+// ── Comma-separated input tests ─────────────────────────────────────────────
+//
+// CR-001 REQ-4: Always-on comma stripping.
+
+/// CSV-style with spaces between commas.
+#[test]
+fn comma_csv_style_with_spaces() {
+    cmd()
+        .args(["-i", "0x04000001, 0x0000220f, 0x01070000, 0x9eece789"])
+        .assert()
+        .success()
+        .stdout(pred::contains("ConfType0ReadReq"));
+}
+
+/// CSV-style without spaces.
+#[test]
+fn comma_csv_style_no_spaces() {
+    cmd()
+        .args(["-i", "0x04000001,0x0000220f,0x01070000,0x9eece789"])
+        .assert()
+        .success()
+        .stdout(pred::contains("ConfType0ReadReq"));
+}
+
+/// Bare hex with commas.
+#[test]
+fn comma_bare_hex() {
+    cmd()
+        .args(["-i", "04000001,0000220f,01070000,9eece789"])
+        .assert()
+        .success()
+        .stdout(pred::contains("ConfType0ReadReq"));
+}
+
+/// Mixed separators: commas, spaces, mixed prefixes.
+#[test]
+fn comma_mixed_separators() {
+    cmd()
+        .args(["-i", "0x04000001, 0000220f,0x01070000 9eece789"])
+        .assert()
+        .success()
+        .stdout(pred::contains("ConfType0ReadReq"));
+}
+
+/// Trailing comma is silently ignored.
+#[test]
+fn comma_trailing_comma_ignored() {
+    cmd()
+        .args(["-i", "04000001, 0000220f, 01070000, 9eece789,"])
+        .assert()
+        .success()
+        .stdout(pred::contains("ConfType0ReadReq"));
+}
+
+/// Commas with --swap: commas stripped first, then DWords swapped.
+#[test]
+fn comma_with_swap() {
+    cmd()
+        .args([
+            "-s",
+            "-i",
+            "0x02100020, 0xFF200000, 0x04000000, 0x00000040",
+        ])
+        .assert()
+        .success()
+        .stdout(pred::contains("MemReadReq"))
+        .stdout(pred::contains("4DW no Data Header"));
+}
+
+/// JSON output with comma-separated input is identical to without commas.
+#[test]
+fn comma_json_output_matches() {
+    let output_comma = cmd()
+        .args([
+            "-i",
+            "0x04000001, 0x0000220f, 0x01070000, 0x9eece789",
+            "--output",
+            "json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let output_no_comma = cmd()
+        .args([
+            "-i",
+            "0x04000001 0x0000220f 0x01070000 0x9eece789",
+            "--output",
+            "json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let comma_text = String::from_utf8(output_comma).unwrap();
+    let no_comma_text = String::from_utf8(output_no_comma).unwrap();
+    assert_eq!(
+        comma_text, no_comma_text,
+        "comma-separated input should produce identical output"
+    );
+}
+
+/// Commas in file input: each line has comma-separated hex.
+#[test]
+fn comma_in_file_input() {
+    let dir = std::env::temp_dir();
+    let path = dir.join("rtlp_test_comma.txt");
+    std::fs::write(
+        &path,
+        "0x04000001, 0x0000220f, 0x01070000, 0x9eece789\n\
+         0x4a000001, 0x2001FF00, 0xC281FF10, 0x00000000\n",
+    )
+    .unwrap();
+
+    cmd()
+        .args(["-f", path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(pred::contains("ConfType0ReadReq"))
+        .stdout(pred::contains("CplData"));
+
+    std::fs::remove_file(&path).ok();
+}
+
+// ── Backward compatibility ──────────────────────────────────────────────────
+//
+// Verify existing behavior is unchanged: without --swap, memory/completion/
+// message TLP output is not affected by the config TLP changes.
+
+/// Memory request output is unchanged (no new config fields leak).
+#[test]
+fn backward_compat_mem_req_unchanged() {
+    cmd()
+        .args(["-i", MEM_READ_4DW])
+        .assert()
+        .success()
+        .stdout(pred::contains("MemReadReq"))
+        // Config-specific fields must NOT appear
+        .stdout(pred::contains("Target BDF").not())
+        .stdout(pred::contains("Register Name").not())
+        .stdout(pred::contains("Register Offset").not());
+}
+
+/// Completion output is unchanged.
+#[test]
+fn backward_compat_cpl_unchanged() {
+    cmd()
+        .args(["-i", CPL_DATA])
+        .assert()
+        .success()
+        .stdout(pred::contains("CplData"))
+        .stdout(pred::contains("Compl ID"))
+        // Config-specific fields must NOT appear
+        .stdout(pred::contains("Target BDF").not())
+        .stdout(pred::contains("Register Name").not());
+}
+
+/// Without --swap, default parsing path is identical to before.
+#[test]
+fn backward_compat_no_swap_default() {
+    cmd()
+        .args(["-i", CONF_READ, "--output", "json"])
+        .assert()
+        .success()
+        // All original fields still present
+        .stdout(pred::contains("\"Req ID\""))
+        .stdout(pred::contains("\"Tag\""))
+        .stdout(pred::contains("\"Bus\""))
+        .stdout(pred::contains("\"Device\""))
+        .stdout(pred::contains("\"Function\""))
+        .stdout(pred::contains("\"Ext Reg Nr\""))
+        .stdout(pred::contains("\"Reg Nr\""))
+        // Plus new enhanced fields
+        .stdout(pred::contains("\"Target BDF\""))
+        .stdout(pred::contains("\"Register Offset\""))
+        .stdout(pred::contains("\"Register Name\""));
+}

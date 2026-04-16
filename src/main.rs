@@ -52,6 +52,13 @@ struct Args {
     #[clap(long)]
     lspci: bool,
 
+    /// Byte-swap each 32-bit DWord before parsing.
+    /// Use when input was captured on a little-endian CPU
+    /// (e.g. MIPS LE, some ARM) and the bytes within each
+    /// DWord are reversed relative to PCIe wire order.
+    #[clap(short, long)]
+    swap: bool,
+
     /// Force all TLPs to be parsed as PCIe 6.0 flit-mode packets.
     /// Normally not needed with --aer or --lspci, which auto-detect Flit Mode.
     /// Use this flag for raw hex input on a known Flit Mode link.
@@ -99,6 +106,9 @@ struct Config {
     output: OutputFormat,
     /// Global override: true → force all TLPs to Flit mode (from --flit flag)
     flit: bool,
+    /// Byte-swap each 32-bit DWord before parsing (--swap flag)
+    #[allow(dead_code)]
+    swap: bool,
 }
 
 // ── AER / lspci scanner ───────────────────────────────────────────────────────
@@ -266,13 +276,18 @@ fn body_val_style(key: &str, value: &str) -> &'static str {
 
 enum ParseConfigError {
     InvalidInput(usize),
+    SwapNotAligned(usize, usize),
 }
 
 impl Config {
     fn remove_whitespace(s: &str) -> String {
-        // Strip optional 0x/0X prefix from each whitespace-separated token,
-        // then concatenate — allows inputs like "0x04000001 0x0000220f ..."
-        s.split_whitespace()
+        // Split on whitespace AND commas, strip optional 0x/0X prefix from
+        // each token, then concatenate — allows inputs like:
+        //   "0x04000001, 0x0000220f, ..."   (CSV-style)
+        //   "04000001,0000220f,..."          (no spaces)
+        //   "0x04000001 0000220f 0x01070000" (existing)
+        s.split(|c: char| c.is_whitespace() || c == ',')
+            .filter(|tok| !tok.is_empty())
             .map(|tok| {
                 tok.strip_prefix("0x")
                     .or_else(|| tok.strip_prefix("0X"))
@@ -306,12 +321,23 @@ impl Config {
         count: Option<usize>,
         output: OutputFormat,
         flit: bool,
+        swap: bool,
     ) -> Result<Config, ParseConfigError> {
         let mut inputs = Vec::new();
         for (i, (raw, source, detected_flit)) in raw_inputs.into_iter().enumerate() {
             let cleaned = Config::remove_whitespace(&raw);
             match Config::convert_to_vec(&cleaned) {
-                Ok(bytes) => inputs.push((bytes, source, detected_flit)),
+                Ok(mut bytes) => {
+                    if swap {
+                        if bytes.len() % 4 != 0 {
+                            return Err(ParseConfigError::SwapNotAligned(i + 1, bytes.len()));
+                        }
+                        for chunk in bytes.chunks_exact_mut(4) {
+                            chunk.reverse();
+                        }
+                    }
+                    inputs.push((bytes, source, detected_flit));
+                }
                 Err(()) => return Err(ParseConfigError::InvalidInput(i + 1)),
             }
         }
@@ -320,7 +346,100 @@ impl Config {
             count,
             output,
             flit,
+            swap,
         })
+    }
+}
+
+// ── Config TLP helpers ───────────────────────────────────────────────────────
+
+/// Decode a 4-bit byte enable mask to a human-readable byte-lane indicator.
+fn decode_byte_enable(be: u8) -> &'static str {
+    match be & 0xF {
+        0x0 => "none",
+        0x1 => "byte 0",
+        0x2 => "byte 1",
+        0x3 => "bytes 0-1",
+        0x4 => "byte 2",
+        0x5 => "bytes 0,2",
+        0x6 => "bytes 1-2",
+        0x7 => "bytes 0-2",
+        0x8 => "byte 3",
+        0x9 => "bytes 0,3",
+        0xA => "bytes 1,3",
+        0xB => "bytes 0-1,3",
+        0xC => "bytes 2-3",
+        0xD => "bytes 0,2-3",
+        0xE => "bytes 1-3",
+        0xF => "bytes 0-3",
+        _ => unreachable!(),
+    }
+}
+
+/// PCI Type 0 (endpoint) config-space register name lookup (offsets 0x00..0x3F).
+///
+/// Returns the register name whose DWORD-aligned offset matches the given offset.
+/// The offset is masked to a 4-byte boundary before lookup.
+fn type0_register_name(offset: u16) -> Option<&'static str> {
+    match offset & !0x3 {
+        0x00 => Some("Vendor ID / Device ID"),
+        0x04 => Some("Command / Status"),
+        0x08 => Some("Revision ID / Class Code"),
+        0x0C => Some("Cache Line Size / Latency Timer / Header Type / BIST"),
+        0x10 => Some("BAR 0"),
+        0x14 => Some("BAR 1"),
+        0x18 => Some("BAR 2"),
+        0x1C => Some("BAR 3"),
+        0x20 => Some("BAR 4"),
+        0x24 => Some("BAR 5"),
+        0x28 => Some("Cardbus CIS Pointer"),
+        0x2C => Some("Subsystem Vendor ID / Subsystem ID"),
+        0x30 => Some("Expansion ROM Base Address"),
+        0x34 => Some("Capabilities Pointer"),
+        // 0x38 is reserved in Type 0
+        0x3C => Some("Interrupt Line / Interrupt Pin / Min_Gnt / Max_Lat"),
+        _ => None,
+    }
+}
+
+/// PCI Type 1 (bridge) config-space register name lookup (offsets 0x00..0x3F).
+fn type1_register_name(offset: u16) -> Option<&'static str> {
+    match offset & !0x3 {
+        0x00 => Some("Vendor ID / Device ID"),
+        0x04 => Some("Command / Status"),
+        0x08 => Some("Revision ID / Class Code"),
+        0x0C => Some("Cache Line Size / Latency Timer / Header Type / BIST"),
+        0x10 => Some("BAR 0"),
+        0x14 => Some("BAR 1"),
+        0x18 => Some("Primary / Secondary / Subordinate Bus / Sec Latency Timer"),
+        0x1C => Some("I/O Base / I/O Limit / Secondary Status"),
+        0x20 => Some("Memory Base / Memory Limit"),
+        0x24 => Some("Prefetchable Memory Base / Limit"),
+        0x28 => Some("Prefetchable Base Upper 32"),
+        0x2C => Some("Prefetchable Limit Upper 32"),
+        0x30 => Some("I/O Base Upper 16 / I/O Limit Upper 16"),
+        0x34 => Some("Capabilities Pointer"),
+        0x38 => Some("Expansion ROM Base Address"),
+        0x3C => Some("Interrupt Line / Interrupt Pin / Bridge Control"),
+        _ => None,
+    }
+}
+
+/// Look up the register name for a given config-space offset, choosing the
+/// Type 0 or Type 1 map based on whether the TLP is a Type 0 or Type 1
+/// config request.
+fn config_register_name(offset: u16, is_type1: bool) -> String {
+    if offset < 0x40 {
+        let name = if is_type1 {
+            type1_register_name(offset)
+        } else {
+            type0_register_name(offset)
+        };
+        name.unwrap_or("(reserved)").to_string()
+    } else if offset >= 0x100 {
+        format!("(extended config space - offset {:#05X})", offset)
+    } else {
+        format!("(capabilities region - offset {:#04X})", offset)
     }
 }
 
@@ -415,7 +534,11 @@ impl TlpTool {
         fields
     }
 
-    fn collect_cfg_req(tlp: &TlpPacket) -> Vec<(String, String)> {
+    fn collect_cfg_req(
+        tlp: &TlpPacket,
+        tlp_type: &TlpType,
+        raw_bytes: &[u8],
+    ) -> Vec<(String, String)> {
         let tlpf = match tlp.tlp_format() {
             Ok(f) => f,
             Err(e) => {
@@ -440,15 +563,110 @@ impl TlpTool {
                 )];
             }
         };
-        vec![
+
+        let is_type1 = matches!(
+            tlp_type,
+            TlpType::ConfType1ReadReq | TlpType::ConfType1WriteReq
+        );
+        let is_write = matches!(
+            tlp_type,
+            TlpType::ConfType0WriteReq | TlpType::ConfType1WriteReq
+        );
+
+        // Extract byte enables from DW1 (raw_bytes[4..8])
+        // DW1[7:4] = Last DW BE, DW1[3:0] = First DW BE
+        let (fdwbe, ldwbe) = if raw_bytes.len() >= 8 {
+            let dw1_byte3 = raw_bytes[7]; // lowest byte of DW1
+            (dw1_byte3 & 0xF, (dw1_byte3 >> 4) & 0xF)
+        } else {
+            (0u8, 0u8)
+        };
+
+        // Compute register offset: (ext_reg_nr << 8) | (reg_nr << 2)
+        let reg_offset =
+            ((cfg.ext_reg_nr() as u16) << 8) | ((cfg.reg_nr() as u16) << 2);
+
+        // BDF notation
+        let bdf = format!(
+            "{:02X}:{:02X}.{:X}",
+            cfg.bus_nr(),
+            cfg.dev_nr(),
+            cfg.func_nr()
+        );
+
+        // Register name
+        let reg_name = config_register_name(reg_offset, is_type1);
+
+        let mut fields = vec![
             ("Req ID".into(), format!("{:#X}", cfg.req_id())),
             ("Tag".into(), format!("{:#X}", cfg.tag())),
+            (
+                "First DW BE".into(),
+                format!("{:#X} ({})", fdwbe, decode_byte_enable(fdwbe)),
+            ),
+            (
+                "Last DW BE".into(),
+                format!("{:#X} ({})", ldwbe, decode_byte_enable(ldwbe)),
+            ),
+            ("Target BDF".into(), bdf.clone()),
             ("Bus".into(), format!("{:#X}", cfg.bus_nr())),
             ("Device".into(), format!("{:#X}", cfg.dev_nr())),
             ("Function".into(), format!("{:#X}", cfg.func_nr())),
+            ("Register Offset".into(), format!("{:#05X}", reg_offset)),
+            ("Register Name".into(), reg_name.clone()),
             ("Ext Reg Nr".into(), format!("{:#X}", cfg.ext_reg_nr())),
             ("Reg Nr".into(), format!("{:#X}", cfg.reg_nr())),
-        ]
+        ];
+
+        if is_write {
+            // DW3 data payload: raw_bytes[12..16]
+            if raw_bytes.len() >= 16 {
+                let data_dw = u32::from_be_bytes([
+                    raw_bytes[12],
+                    raw_bytes[13],
+                    raw_bytes[14],
+                    raw_bytes[15],
+                ]);
+                fields.push(("Data".into(), format!("{:#010X}", data_dw)));
+
+                // Build a compact data value based on byte enables
+                let masked_data = match fdwbe {
+                    0xF => format!("{:#010X}", data_dw),
+                    0x3 => format!("{:#06X}", data_dw & 0xFFFF),
+                    0xC => format!("{:#06X}", (data_dw >> 16) & 0xFFFF),
+                    0x1 => format!("{:#04X}", data_dw & 0xFF),
+                    _ => format!("{:#010X}", data_dw),
+                };
+
+                // Determine the human-friendly register name for the Operation summary
+                let display_name = if reg_offset < 0x40 {
+                    reg_name.clone()
+                } else {
+                    format!("offset {:#05X}", reg_offset)
+                };
+
+                fields.push((
+                    "Operation".into(),
+                    format!(
+                        "Write {} to {} register at {}",
+                        masked_data, display_name, bdf
+                    ),
+                ));
+            }
+        } else {
+            // Config read — summary line
+            let display_name = if reg_offset < 0x40 {
+                reg_name.clone()
+            } else {
+                format!("offset {:#05X}", reg_offset)
+            };
+            fields.push((
+                "Operation".into(),
+                format!("Read {} register at {}", display_name, bdf),
+            ));
+        }
+
+        fields
     }
 
     fn collect_cmpl(tlp: &TlpPacket) -> Vec<(String, String)> {
@@ -501,7 +719,7 @@ impl TlpTool {
         ]
     }
 
-    fn collect_body_fields(tlp: &TlpPacket) -> Vec<(String, String)> {
+    fn collect_body_fields(tlp: &TlpPacket, raw_bytes: &[u8]) -> Vec<(String, String)> {
         match tlp.tlp_type() {
             Ok(tlpt) => match tlpt {
                 TlpType::MemReadReq
@@ -517,7 +735,7 @@ impl TlpTool {
                 TlpType::ConfType0ReadReq
                 | TlpType::ConfType0WriteReq
                 | TlpType::ConfType1ReadReq
-                | TlpType::ConfType1WriteReq => Self::collect_cfg_req(tlp),
+                | TlpType::ConfType1WriteReq => Self::collect_cfg_req(tlp, &tlpt, raw_bytes),
 
                 TlpType::MsgReq | TlpType::MsgReqData => Self::collect_msg(tlp),
 
@@ -636,7 +854,7 @@ impl TlpTool {
             tlp_type,
             tlp_format,
             header_fields: Self::collect_header_fields(raw_bytes), // use DW0 bytes, not tlp.data()
-            body_fields: Self::collect_body_fields(tlp), // tlp.data()=bytes[4..] is correct here
+            body_fields: Self::collect_body_fields(tlp, raw_bytes), // pass raw for cfg req BE/data
             is_flit: false,
         }
     }
@@ -987,10 +1205,17 @@ fn main() {
         std::process::exit(1);
     }
 
-    match Config::new(raw_inputs, args.count, args.output, args.flit) {
+    match Config::new(raw_inputs, args.count, args.output, args.flit, args.swap) {
         Ok(c) => std::process::exit(TlpTool::new(c).run()),
         Err(ParseConfigError::InvalidInput(n)) => {
             eprintln!("input #{n} is not valid hex");
+            std::process::exit(1);
+        }
+        Err(ParseConfigError::SwapNotAligned(n, len)) => {
+            eprintln!(
+                "error: --swap requires input length to be a multiple of 4 bytes \
+                 (input #{n} has {len} bytes)"
+            );
             std::process::exit(1);
         }
     }

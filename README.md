@@ -58,17 +58,23 @@ rtlp-tool -i "04000001 0000220f 01070000 9eece789"
 | AT         | 20     | 2      | 0     |
 | Length     | 22     | 10     | 1     |
 +------------+--------+--------+-------+
-+------------+--------------------+
-| TLP:       | 3DW no Data Header |
-+------------+--------------------+
-| Req ID     | 0x0                |
-| Tag        | 0x22               |
-| Bus        | 0x1                |
-| Device     | 0x0                |
-| Function   | 0x7                |
-| Ext Reg Nr | 0x0                |
-| Reg Nr     | 0x0                |
-+------------+--------------------+
++-----------------+------------------------------------------------+
+| TLP:            | 3DW no Data Header                             |
++-----------------+------------------------------------------------+
+| Req ID          | 0x0                                            |
+| Tag             | 0x22                                           |
+| First DW BE     | 0xF (bytes 0-3)                                |
+| Last DW BE      | 0x0 (none)                                     |
+| Target BDF      | 01:00.7                                        |
+| Bus             | 0x1                                            |
+| Device          | 0x0                                            |
+| Function        | 0x7                                            |
+| Register Offset | 0x000                                          |
+| Register Name   | Vendor ID / Device ID                          |
+| Ext Reg Nr      | 0x0                                            |
+| Reg Nr          | 0x0                                            |
+| Operation       | Read Vendor ID / Device ID register at 01:00.7 |
++-----------------+------------------------------------------------+
 
 ```
 ### AER Report
@@ -107,17 +113,23 @@ rtlp-tool -i "04000001 00200a03 05010000 00050100"
 | AT         | 20     | 2      | 0     |
 | Length     | 22     | 10     | 1     |
 +------------+--------+--------+-------+
-+------------+--------------------+
-| TLP:       | 3DW no Data Header |
-+------------+--------------------+
-| Req ID     | 0x20               |
-| Tag        | 0xA                |
-| Bus        | 0x5                |
-| Device     | 0x0                |
-| Function   | 0x1                |
-| Ext Reg Nr | 0x0                |
-| Reg Nr     | 0x0                |
-+------------+--------------------+
++-----------------+------------------------------------------------+
+| TLP:            | 3DW no Data Header                             |
++-----------------+------------------------------------------------+
+| Req ID          | 0x20                                           |
+| Tag             | 0xA                                            |
+| First DW BE     | 0x3 (bytes 0-1)                                |
+| Last DW BE      | 0x0 (none)                                     |
+| Target BDF      | 05:00.1                                        |
+| Bus             | 0x5                                            |
+| Device          | 0x0                                            |
+| Function        | 0x1                                            |
+| Register Offset | 0x000                                          |
+| Register Name   | Vendor ID / Device ID                          |
+| Ext Reg Nr      | 0x0                                            |
+| Reg Nr          | 0x0                                            |
+| Operation       | Read Vendor ID / Device ID register at 05:00.1 |
++-----------------+------------------------------------------------+
 ```
 
 ## Usage
@@ -128,8 +140,13 @@ rtlp-tool [OPTIONS]
 Options:
   -i, --input <INPUT>        TLP hex string(s) to parse. May be specified multiple times.
                              Each DWord may optionally be prefixed with 0x/0X.
+                             Commas between DWords are accepted (CSV-style).
                              Reads one TLP per line from stdin when omitted.
   -f, --file <FILE>          Read TLP hex strings from a file (one per line)
+  -s, --swap                 Byte-swap each 32-bit DWord before parsing.
+                             Use when input was captured on a little-endian CPU
+                             (e.g. MIPS LE, some ARM) and the bytes within each
+                             DWord are reversed relative to PCIe wire order.
       --aer                  Scan input for AER TLP headers
                              (matches both 'TLP Header:' and 'HeaderLog:' patterns;
                               associates TLPs with device context only when preceded
@@ -174,6 +191,54 @@ rtlp-tool -i "0x04000001 0x0000220f 0x01070000 0x9eece789"
 rtlp-tool -i "0x04000001 0000220f 0x01070000 9eece789"
 ```
 
+### Comma-separated input
+
+Commas between DWords are always accepted — useful when pasting from CSV
+files, spreadsheets, or comma-separated log output:
+
+```bash
+# CSV-style with spaces
+rtlp-tool -i "0x04000001, 0x0000220f, 0x01070000, 0x9eece789"
+
+# CSV-style without spaces
+rtlp-tool -i "0x04000001,0x0000220f,0x01070000,0x9eece789"
+
+# bare hex with commas
+rtlp-tool -i "04000001,0000220f,01070000,9eece789"
+
+# mixed separators (commas, spaces, mixed prefixes)
+rtlp-tool -i "0x04000001, 0000220f,0x01070000 9eece789"
+```
+
+### DWord byte-swap (`--swap` / `-s`)
+
+When TLP data is captured by a little-endian CPU (e.g. MIPS LE, some ARM
+configurations), the bytes within each 32-bit DWord are reversed relative
+to the PCIe wire order. Use `--swap` to reverse them before parsing:
+
+```bash
+# MIPS LE capture — bytes within each DWord are reversed
+rtlp-tool -s -i "0x01000044 0x03210000 0x04000104 0x07000000"
+
+# Same TLP without --swap (manually pre-swapped to PCIe wire order)
+rtlp-tool -i "44000001 00002103 04010004 00000007"
+```
+
+Both commands above produce identical output: a `ConfType0WriteReq` to the
+Command register.
+
+64-bit Memory Read from a MIPS root complex across a Non-Transparent Bridge:
+
+```bash
+rtlp-tool -s -i "0x02100020 0xFF200000 0x04000000 0x00000040"
+# → MemReadReq, 4DW, Length=2, Addr=0x00000004_40000000
+```
+
+The swap is applied per 32-bit DWord before any parsing takes place. If the
+input length is not a multiple of 4 bytes, the tool reports an error.
+`--swap` works with all input modes: `-i`, `-f`, `--aer`, `--lspci`, stdin,
+and can be combined with `--flit`.
+
 ### Parse multiple TLPs in one call
 
 Repeat `-i` for each TLP. The tool prints a numbered separator between them:
@@ -188,17 +253,23 @@ rtlp-tool \
 | TLP Type | ConfType0ReadReq | 3DW no Data Header |
 +----------+------------------+--------------------+
 ...
-+------------+--------------------+
-| TLP:       | 3DW no Data Header |
-+------------+--------------------+
-| Req ID     | 0x20               |
-| Tag        | 0xA                |
-| Bus        | 0x5                |
-| Device     | 0x0                |
-| Function   | 0x1                |
-| Ext Reg Nr | 0x0                |
-| Reg Nr     | 0x0                |
-+------------+--------------------+
++-----------------+------------------------------------------------+
+| TLP:            | 3DW no Data Header                             |
++-----------------+------------------------------------------------+
+| Req ID          | 0x20                                           |
+| Tag             | 0xA                                            |
+| First DW BE     | 0x3 (bytes 0-1)                                |
+| Last DW BE      | 0x0 (none)                                     |
+| Target BDF      | 05:00.1                                        |
+| Bus             | 0x5                                            |
+| Device          | 0x0                                            |
+| Function        | 0x1                                            |
+| Register Offset | 0x000                                          |
+| Register Name   | Vendor ID / Device ID                          |
+| Ext Reg Nr      | 0x0                                            |
+| Reg Nr          | 0x0                                            |
+| Operation       | Read Vendor ID / Device ID register at 05:00.1 |
++-----------------+------------------------------------------------+
 
 === TLP #2 ===
 +----------+---------+----------------------+
