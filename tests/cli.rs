@@ -1099,9 +1099,9 @@ fn swap_with_commas() {
 /// --swap with file input.
 #[test]
 fn swap_with_file_input() {
-    // Create a temp file with LE-swapped bytes
+    // Create a temp file with LE-swapped bytes (unique per PID to avoid parallel-test collisions)
     let dir = std::env::temp_dir();
-    let path = dir.join("rtlp_test_swap.txt");
+    let path = dir.join(format!("rtlp_test_swap_{}.txt", std::process::id()));
     std::fs::write(&path, "0x01000044 0x03210000 0x04000104 0x07000000\n").unwrap();
 
     cmd()
@@ -1407,7 +1407,7 @@ fn comma_json_output_matches() {
 #[test]
 fn comma_in_file_input() {
     let dir = std::env::temp_dir();
-    let path = dir.join("rtlp_test_comma.txt");
+    let path = dir.join(format!("rtlp_test_comma_{}.txt", std::process::id()));
     std::fs::write(
         &path,
         "0x04000001, 0x0000220f, 0x01070000, 0x9eece789\n\
