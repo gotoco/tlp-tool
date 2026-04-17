@@ -1,6 +1,6 @@
 [package]
 name = "rtlp_tool"
-version = "0.5.1"
+version = "0.5.2"
 edition = "2024"
 authors = ["Maciej Grochowski <maciej.grochowski@pm.me>"]
 description = "CLI tool for parsing and displaying PCI Express TLP packet headers"
