@@ -106,9 +106,6 @@ struct Config {
     output: OutputFormat,
     /// Global override: true → force all TLPs to Flit mode (from --flit flag)
     flit: bool,
-    /// Byte-swap each 32-bit DWord before parsing (--swap flag)
-    #[allow(dead_code)]
-    swap: bool,
 }
 
 // ── AER / lspci scanner ───────────────────────────────────────────────────────
@@ -346,7 +343,6 @@ impl Config {
             count,
             output,
             flit,
-            swap,
         })
     }
 }
